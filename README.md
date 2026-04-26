@@ -1,5 +1,9 @@
 # specman
 
+[![npm version](https://img.shields.io/npm/v/specman.svg?style=flat-square)](https://www.npmjs.com/package/specman)
+[![npm downloads](https://img.shields.io/npm/dm/specman.svg?style=flat-square)](https://www.npmjs.com/package/specman)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+
 AI-first spec management CLI for software teams.
 
 `specman` helps teams manage project specs, architecture decisions, domain logic, solved cases, and AI tool instructions — so that Claude, Cursor, Copilot, Codex, ChatGPT, and other AI coding tools follow the same source of truth.
