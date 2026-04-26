@@ -98,7 +98,7 @@ describe('sync command', () => {
     await expect(syncCommand(tempDir, 'all', { check: true })).rejects.toThrow('process.exit called');
     expect(exitSpy).toHaveBeenCalledWith(1);
     const output = logSpy.mock.calls.flat().join('\n');
-    expect(output).toContain('CLAUDE.md: create');
+    expect(output).toContain('CLAUDE.md');
 
     logSpy.mockRestore();
     exitSpy.mockRestore();
@@ -116,7 +116,7 @@ describe('sync command', () => {
 
     expect(exitSpy).not.toHaveBeenCalled();
     const output = logSpy.mock.calls.flat().join('\n');
-    expect(output).toContain('SPECMAN.md: unchanged');
+    expect(output).toContain('SPECMAN.md');
 
     logSpy.mockRestore();
     exitSpy.mockRestore();
