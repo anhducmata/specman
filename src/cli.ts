@@ -8,6 +8,7 @@ import { initCommand } from './commands/init.js';
 import { syncCommand } from './commands/sync.js';
 import { validateCommand } from './commands/validate.js';
 import { removeCommand } from './commands/remove.js';
+import { gapCommand } from './commands/gap.js';
 
 const program = new Command();
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -38,9 +39,21 @@ program
   .command('sync')
   .option('--check', 'Show sync status without writing files')
   .option('--yes', 'Apply changes without confirmation', false)
-  .description('Update AI tool rules from the current specs')
-  .action(async (options: { check?: boolean; yes?: boolean }) => {
-    await syncCommand(process.cwd(), 'all', { check: !!options.check, yes: !!options.yes });
+  .option('--code-to-specs', 'Use AI to read the codebase and update spec files')
+  .option('--specs-to-code', 'Use AI to read specs and implement them into source code')
+  .description('Update AI tool rules from the current specs, or sync specs ↔ code via AI')
+  .action(async (options: {
+    check?: boolean;
+    yes?: boolean;
+    codeToSpecs?: boolean;
+    specsToCode?: boolean;
+  }) => {
+    await syncCommand(process.cwd(), 'all', {
+      check: !!options.check,
+      yes: !!options.yes,
+      codeToSpecs: !!options.codeToSpecs,
+      specsToCode: !!options.specsToCode,
+    });
   });
 
 // ─── specman validate ───
@@ -51,7 +64,20 @@ program
   .option('--update', 'Update the logic-lock snapshot when used with --logic')
   .description('Validate specs, AI rules, solved cases, or code/spec freshness')
   .action(async (options: { review?: boolean; logic?: boolean; update?: boolean }) => {
-    await validateCommand(process.cwd(), { review: !!options.review, logic: !!options.logic, update: !!options.update });
+    await validateCommand(process.cwd(), {
+      review: !!options.review,
+      logic: !!options.logic,
+      update: !!options.update,
+    });
+  });
+
+// ─── specman gap ───
+program
+  .command('gap')
+  .option('--ai', 'Run an AI-powered deep gap analysis after the local check')
+  .description('Show the gap between current specs and actual code (local check + optional AI analysis)')
+  .action(async (options: { ai?: boolean }) => {
+    await gapCommand(process.cwd(), { ai: !!options.ai });
   });
 
 // ─── specman remove ───
