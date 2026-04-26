@@ -1,0 +1,13 @@
+# Domain Scenarios
+# These scenarios define expected behavior for critical domain logic.
+# Use specman validate to verify scenarios match implementation.
+
+scenarios:
+  - id: EXAMPLE_SCENARIO
+    description: Example scenario — replace with real scenarios
+    input:
+      condition_a: true
+      condition_b: true
+    expected:
+      allowed: true
+      reason: ALL_CONDITIONS_MET

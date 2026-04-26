@@ -1,0 +1,15 @@
+# specman ignore patterns
+# Files and directories matching these patterns will be excluded from scanning
+
+node_modules/
+dist/
+build/
+.git/
+.env
+.env.*
+*.log
+coverage/
+__pycache__/
+*.pyc
+vendor/
+target/
