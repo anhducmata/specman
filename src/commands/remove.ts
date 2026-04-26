@@ -2,7 +2,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.js';
 import { fileExists, readTextFile } from '../core/files.js';
-import { icons } from '../core/ui.js';
+import { icons, printPlanItem, printCallout, c } from '../core/ui.js';
 
 interface RemoveOptions {
   yes?: boolean;
@@ -63,19 +63,20 @@ export async function removeCommand(root: string, options: RemoveOptions = {}): 
   }
 
   if (plans.length === 0) {
-    console.log(`${icons.info} No specman-managed files found.`);
+    console.log(`  ${icons.info}  No specman-managed files found.`);
     return;
   }
 
-  console.log('Specman-managed files that would be removed:');
+  printCallout('info', [c.bold('Specman-managed files that would be removed:')]);
   for (const plan of plans) {
-    const label = plan.action === 'strip-block' ? `${plan.path} (remove specman block only)` : plan.path;
-    console.log(`   ${icons.bullet} ${label}`);
+    const label = plan.action === 'strip-block' ? `${plan.path} ${c.dim('(remove specman block only)')}` : plan.path;
+    printPlanItem(label, plan.action);
   }
 
   if (!options.yes) {
     console.log();
-    console.log('No files were removed. Re-run with `specman remove --yes` to delete them.');
+    console.log(`  ${icons.info}  No files were removed.`);
+    console.log(`  Re-run with ${c.cyan('specman remove --yes')} to delete them.`);
     return;
   }
 
@@ -89,7 +90,8 @@ export async function removeCommand(root: string, options: RemoveOptions = {}): 
   }
 
   console.log();
-  console.log(`${icons.success} Removed specman data from ${plans.length} path(s).`);
+  console.log(`  ${icons.success}  ${c.greenB(`Removed specman data from ${plans.length} path(s).`)}`);
+  console.log();
 }
 
 function removeManagedBlocks(content: string): string {

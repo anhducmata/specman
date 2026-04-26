@@ -2,9 +2,9 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSnapshot, loadSnapshot, compareSnapshots } from '../core/hash.js';
 import { loadConfig } from '../core/config.js';
-import { listFilesRecursive, readTextFile } from '../core/files.js';
+import { listFilesRecursive, readTextFile, discoverSourceFiles, newestMtime } from '../core/files.js';
 import { scanProject } from '../core/scanner.js';
-import { icons, withLoader } from '../core/ui.js';
+import { icons, withLoader, printResults, printSection, c, type ResultItem } from '../core/ui.js';
 import { checkCommand } from './check.js';
 import { snapshotCommand } from './snapshot.js';
 
@@ -26,7 +26,7 @@ export async function validateCommand(root: string, options: ValidateOptions | b
   }
 
   if (normalized.update && !normalized.logic) {
-    console.log(`${icons.error} Use \`specman validate --logic --update\` to update a logic-lock snapshot.`);
+    console.log(`  ${icons.error}  Use \`specman validate --logic --update\` to update a logic-lock snapshot.`);
     process.exit(1);
   }
 
@@ -43,14 +43,14 @@ export async function validateCommand(root: string, options: ValidateOptions | b
   const config = await loadConfig(root);
 
   if (!config.logicLock.enabled) {
-    console.log(`${icons.info} Logic-lock is disabled in .specman/config.json.`);
+    console.log(`  ${icons.info}  Logic-lock is disabled in .specman/config.json.`);
     return;
   }
 
   const saved = await loadSnapshot(root);
   if (!saved) {
-    console.log(`${icons.error} No logic-lock snapshot found.`);
-    console.log('   Run `specman validate --logic --update` to create one after reviewing the configured paths.');
+    console.log(`  ${icons.error}  No logic-lock snapshot found.`);
+    console.log(`  Run ${c.cyan('specman validate --logic --update')} to create one after reviewing the configured paths.`);
     process.exit(1);
   }
 
@@ -63,41 +63,39 @@ export async function validateCommand(root: string, options: ValidateOptions | b
   const hasChanges = result.changed.length > 0 || result.added.length > 0 || result.removed.length > 0;
 
   if (!hasChanges) {
-    console.log(`${icons.success} No changes detected. Logic-lock is intact.`);
+    console.log(`  ${icons.success}  ${c.greenB('No changes detected. Logic-lock is intact.')}`);
     return;
   }
 
   // Report changes
   if (result.changed.length > 0) {
-    console.log(`${icons.warn} CHANGED files (logic may have changed):`);
-    for (const c of result.changed) {
-      console.log(`   ${icons.bullet} ${c.item.path}`);
-      console.log(`     old: ${c.oldHash.substring(0, 16)}...`);
-      console.log(`     new: ${c.newHash.substring(0, 16)}...`);
+    printSection('Changed Files');
+    for (const ch of result.changed) {
+      console.log(`  ${icons.warn}  ${ch.item.path}`);
+      console.log(`     ${c.dim('old:')} ${c.dim(ch.oldHash.substring(0, 16))}${c.dim('...')}`);
+      console.log(`     ${c.dim('new:')} ${c.yellow(ch.newHash.substring(0, 16))}${c.dim('...')}`);
     }
-    console.log();
   }
 
   if (result.added.length > 0) {
-    console.log(`+ NEW files (not in previous snapshot):`);
+    printSection('New Files');
     for (const a of result.added) {
-      console.log(`   ${icons.bullet} ${a.path}`);
+      console.log(`  ${icons.info}  ${c.cyanB(a.path)}`);
     }
-    console.log();
   }
 
   if (result.removed.length > 0) {
-    console.log(`- REMOVED files (were in previous snapshot):`);
+    printSection('Removed Files');
     for (const r of result.removed) {
-      console.log(`   ${icons.bullet} ${r.path}`);
+      console.log(`  ${icons.error}  ${c.dim(r.path)}`);
     }
-    console.log();
   }
 
-  console.log('Recommendations:');
-  console.log('   1. Review the changed files to confirm they are expected');
-  console.log('   2. Run domain scenario tests if applicable');
-  console.log('   3. Run `specman validate --logic --update` to update the snapshot if changes are approved');
+  printSection('Recommendations');
+  console.log(`  ${c.bold(c.cyanB('1'))}  Review changed files to confirm they are expected`);
+  console.log(`  ${c.bold(c.cyanB('2'))}  Run domain scenario tests if applicable`);
+  console.log(`  ${c.bold(c.cyanB('3'))}  Run ${c.cyan('specman validate --logic --update')} to update the snapshot if changes are approved`);
+  console.log();
 }
 
 async function validateReview(root: string): Promise<void> {
@@ -153,51 +151,10 @@ async function validateReview(root: string): Promise<void> {
     }
   });
 
-  printCodeFindings(findings);
+  printResults(findings as ResultItem[]);
 
   if (findings.some(finding => finding.severity === 'ERROR')) {
     process.exit(1);
   }
 }
 
-async function discoverSourceFiles(root: string): Promise<string[]> {
-  const sourceDirs = ['src', 'app', 'lib', 'internal', 'cmd'];
-  const sourceExts = new Set(['.ts', '.tsx', '.js', '.jsx', '.go', '.py', '.rs', '.java', '.kt', '.php', '.rb', '.cs', '.swift']);
-  const files: string[] = [];
-
-  for (const dir of sourceDirs) {
-    const dirFiles = await listFilesRecursive(join(root, dir));
-    files.push(...dirFiles.filter(file => {
-      const dot = file.lastIndexOf('.');
-      return dot >= 0 && sourceExts.has(file.slice(dot));
-    }));
-  }
-
-  return files;
-}
-
-async function newestMtime(files: string[]): Promise<number | null> {
-  let newest: number | null = null;
-  for (const file of files) {
-    try {
-      const fileStat = await stat(file);
-      const mtime = fileStat.mtimeMs;
-      if (newest === null || mtime > newest) newest = mtime;
-    } catch {
-      // Ignore unreadable files.
-    }
-  }
-  return newest;
-}
-
-function printCodeFindings(findings: { severity: 'ERROR' | 'WARN' | 'INFO'; message: string }[]): void {
-  if (findings.length === 0) {
-    console.log(`${icons.success} Specs appear fresh against current code.`);
-    return;
-  }
-
-  for (const finding of findings) {
-    const icon = finding.severity === 'ERROR' ? icons.error : finding.severity === 'WARN' ? icons.warn : icons.info;
-    console.log(`${icon} ${finding.severity}: ${finding.message}`);
-  }
-}

@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { loadConfig, loadStatus } from '../core/config.js';
 import { fileExists, listFilesRecursive, readTextFile, getFileSize, mapWithConcurrency } from '../core/files.js';
 import { checkForSecrets } from '../core/redactor.js';
-import { icons, withLoader } from '../core/ui.js';
+import { icons, withLoader, printResults, type ResultItem } from '../core/ui.js';
 import type { CheckResult } from '../types.js';
 
 /**
@@ -190,43 +190,11 @@ export async function checkCommand(root: string): Promise<void> {
   });
 
   // ─── Print results ───
-  printResults(results);
+  printResults(results as ResultItem[]);
 
   // ─── Exit code ───
   const hasErrors = results.some(r => r.severity === 'ERROR');
   if (hasErrors) {
     process.exit(1);
   }
-}
-
-function printResults(results: CheckResult[]): void {
-  const errors = results.filter(r => r.severity === 'ERROR');
-  const warns = results.filter(r => r.severity === 'WARN');
-  const infos = results.filter(r => r.severity === 'INFO');
-
-  if (errors.length > 0) {
-    console.log(`${icons.error} ERRORS:`);
-    for (const r of errors) {
-      console.log(`   ERROR: ${r.message}`);
-    }
-    console.log();
-  }
-
-  if (warns.length > 0) {
-    console.log(`${icons.warn} WARNINGS:`);
-    for (const r of warns) {
-      console.log(`   WARN: ${r.message}`);
-    }
-    console.log();
-  }
-
-  if (infos.length > 0) {
-    console.log(`${icons.info} INFO:`);
-    for (const r of infos) {
-      console.log(`   ${r.message}`);
-    }
-    console.log();
-  }
-
-  console.log(`Summary: ${errors.length} error(s), ${warns.length} warning(s), ${infos.length} info(s)`);
 }
