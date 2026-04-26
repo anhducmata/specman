@@ -1,8 +1,24 @@
 # specman
 
-AI-first spec management CLI for software teams.
+**AI-first spec management CLI for software teams.**
 
-`specman` creates a lightweight spec system in your repository and gives modern AI coding tools clear rules for maintaining it.
+specman creates a structured spec system in your repository and keeps AI coding tools — Claude, Codex, Cursor, Copilot, and generic agents — aligned with your project's architecture, domain rules, and engineering standards.
+
+[![npm version](https://img.shields.io/npm/v/specman.svg)](https://www.npmjs.com/package/specman)
+[![license](https://img.shields.io/npm/l/specman.svg)](https://github.com/anhducmata/specman/blob/main/LICENSE)
+
+---
+
+## Why specman?
+
+AI coding assistants work best when they understand your project's context. Without it, they guess — and guesses lead to inconsistent code, broken conventions, and rework.
+
+specman solves this by:
+
+- **Scaffolding a spec directory** with architecture, domain rules, ADRs, engineering standards, and solved cases
+- **Generating tool-specific instruction files** (`CLAUDE.md`, `CODEX.md`, `AGENTS.md`, `.cursor/rules/`, `.github/copilot-instructions.md`) from a single source of truth
+- **Keeping specs and code in sync** with AI-powered bidirectional sync
+- **Detecting drift** between what your specs say and what your code actually does
 
 ## Install
 
@@ -10,11 +26,15 @@ AI-first spec management CLI for software teams.
 npm install -g specman
 ```
 
-Or run with npx:
+Or run directly with npx:
 
 ```bash
 npx specman init
 ```
+
+**Requirements:** Node.js ≥ 18
+
+---
 
 ## Quick Start
 
@@ -23,131 +43,199 @@ cd your-project
 specman init
 ```
 
-`specman init` creates:
+This will:
 
-- `specs/` with project specs, architecture notes, domain rules, ADRs, and solved cases
-- `.specman/` config/status files
-- `SPECMAN.md` shared AI protocol
-- tool-specific rules for Claude, Codex, Cursor, Copilot, and generic agents
+1. **Scan** your project and detect the tech stack
+2. **Present an interactive tree** for selecting which spec files to create
+3. **Generate** the spec structure and AI instruction files
+4. **Optionally run** Claude CLI or Codex CLI to fill specs with real project context
 
-After creating the structure, interactive terminals are asked whether a local AI CLI should fill the specs:
-
-- Claude CLI
-- Codex CLI
-- printed prompt for Cursor, Copilot, ChatGPT, or another AI tool
-- skip
-
-Non-interactive environments print next steps instead of prompting.
+---
 
 ## Commands
 
 ### `specman init`
 
-Create the spec structure and AI tool rules.
+Initialize the spec structure with interactive file selection and optional AI-powered spec filling.
 
 ```bash
-specman init
-specman init --with claude
-specman init --with codex
-specman init --prompt
-specman init --skip-ai
+specman init                    # Interactive setup
+specman init --with claude      # Auto-fill specs using Claude CLI
+specman init --with codex       # Auto-fill specs using Codex CLI
+specman init --prompt           # Print a prompt for any AI tool
+specman init --skip-ai          # Create files only, no AI prompt
 ```
 
-### `specman validate`
+Features:
+- Auto-detects your tech stack (Node.js, TypeScript, Go, Python, testing frameworks, CI/CD, etc.)
+- Interactive tree-select UI for choosing which spec files to create
+- Injects technology-specific coding and testing rules
+- Detects available AI CLIs and offers them as fill options
 
-Check that the spec system is healthy:
-
-- required files/directories exist
-- AI rule files exist
-- solved cases use the expected structure
-- secrets/PII are not present
-- case files are not too large
-- draft/template-only files are flagged
-
-```bash
-specman validate
-specman validate --review
-specman validate --logic
-specman validate --logic --update
-```
-
-`--review` checks whether specs appear stale against current code.
-
-`--logic` checks logic-lock hashes when a snapshot exists. Use `--logic --update` after reviewing approved logic changes to create or refresh the snapshot.
+---
 
 ### `specman sync`
 
-Update AI tool rules from the current specs.
+Regenerate AI tool instruction files from your current specs, or use AI to sync specs ↔ code.
 
 ```bash
-specman sync
-specman sync --check
-specman sync --yes
+specman sync                    # Regenerate all AI instruction files
+specman sync --check            # Dry run — show what would change
+specman sync --yes              # Apply changes without confirmation
+specman sync --code-to-specs    # AI reads code and updates spec files
+specman sync --specs-to-code    # AI reads specs and implements into code
 ```
 
-This regenerates:
+Generates/updates:
+- `SPECMAN.md` — shared spec protocol
+- `CLAUDE.md` — Claude-specific instructions
+- `CODEX.md` — Codex-specific instructions
+- `AGENTS.md` — generic agent instructions
+- `.cursor/rules/specman.mdc` — Cursor rules
+- `.github/copilot-instructions.md` — Copilot instructions
 
-- `SPECMAN.md`
-- `CLAUDE.md`
-- `CODEX.md`
-- `AGENTS.md`
-- `.cursor/rules/specman.mdc`
-- `.github/copilot-instructions.md`
+**Managed blocks:** If an AI tool file already contains your own instructions, specman wraps its content in `<!-- specman:start -->` / `<!-- specman:end -->` markers. Your content stays untouched — only the managed block is updated on re-sync.
 
-Run it after changing specs so Claude, Cursor, Codex, Copilot, and other agents read the latest rules, cases, domain logic, ADRs, and workflows.
+**Legacy migration:** Files generated by older specman versions (before managed blocks) are automatically detected and migrated.
 
-If an AI tool file already has user-written instructions, `sync` previews the append and asks for confirmation before adding a managed specman block. Existing specman blocks are updated in place.
+---
+
+### `specman validate`
+
+Check that the spec system is healthy and consistent.
+
+```bash
+specman validate                # Basic validation
+specman validate --review       # Check if specs are stale vs current code
+specman validate --logic        # Compare against logic-lock snapshot
+specman validate --logic --update  # Update the logic-lock snapshot
+```
+
+Checks for:
+- Required files and directories exist
+- AI rule files are present and current
+- Solved cases follow the expected structure
+- No secrets, PII, or raw production data in specs
+- Case files aren't oversized
+- Draft or template-only files are flagged
+
+---
+
+### `specman gap`
+
+Analyze the gap between what your specs describe and what your code actually does.
+
+```bash
+specman gap                     # Fast local analysis
+specman gap --ai                # Local analysis + AI-powered deep review
+```
+
+Local checks:
+- **Stack drift** — technologies detected in code but missing from specs
+- **Staleness** — source files newer than spec files
+- **Empty specs** — key spec files that are still template-only
+- **Logic-lock drift** — files changed since last snapshot
+
+The `--ai` flag runs a read-only AI analysis using Claude or Codex CLI for deeper insight.
+
+---
+
+### `specman run`
+
+Use AI to plan and execute a goal step-by-step with interactive task selection.
+
+```bash
+specman run "Implement user authentication"
+specman run --with codex "Add rate limiting"
+specman run --resume            # Resume an interrupted plan
+```
+
+How it works:
+
+1. **Planning** — AI generates a markdown checklist at `.specman/plan.md`
+2. **Selection** — Interactive multi-select UI to choose which tasks to execute
+3. **Execution** — AI executes each selected task sequentially, marking them as complete
+4. **Resumable** — Interrupted runs can be continued with `--resume`
+
+---
 
 ### `specman remove`
 
-Preview and safely remove specman-managed files.
+Safely remove all specman-managed files from a repository.
 
 ```bash
-specman remove
-specman remove --yes
+specman remove                  # Preview what would be removed
+specman remove --yes            # Actually remove the files
 ```
 
-`remove` deletes fully managed generated files and strips only the specman managed block from user-authored AI instruction files.
+- Fully generated files → deleted
+- User-authored files with a specman block → block stripped, your content preserved
+- Legacy generated files (pre-managed-block) → detected and deleted
+
+---
 
 ## Generated Structure
 
-```text
-specs/
-  00-project-overview.md
-  01-detected-stack.md
-  02-assumptions.md
-  03-open-questions.md
-  product/
-  engineering/
-  architecture/
-  domain/
-  adr/
-  cases/
-  ai/
-
-.specman/
-  config.json
-  status.json
-  snapshots/
-
-SPECMAN.md
-CLAUDE.md
-CODEX.md
-AGENTS.md
-.cursor/rules/specman.mdc
-.github/copilot-instructions.md
+```
+your-project/
+├── specs/
+│   ├── 00-project-overview.md
+│   ├── 01-detected-stack.md
+│   ├── 02-assumptions.md
+│   ├── 03-open-questions.md
+│   ├── product/
+│   │   └── requirements.md
+│   ├── engineering/
+│   │   ├── coding-rules.md
+│   │   └── testing-rules.md
+│   ├── architecture/
+│   │   ├── system-overview.md
+│   │   └── components.md
+│   ├── domain/
+│   │   ├── business-rules.md
+│   │   ├── workflows.md
+│   │   ├── decision-tables.md
+│   │   └── scenarios.yaml
+│   ├── adr/
+│   │   └── 0001-initial-project-assumptions.md
+│   ├── cases/
+│   │   └── README.md
+│   └── ai/
+│       ├── instructions.md
+│       ├── forbidden.md
+│       └── checklist.md
+├── .specman/
+│   ├── config.json
+│   ├── status.json
+│   └── plan.md              ← generated by `specman run`
+├── SPECMAN.md
+├── CLAUDE.md
+├── CODEX.md
+├── AGENTS.md
+├── .cursor/rules/specman.mdc
+└── .github/copilot-instructions.md
 ```
 
 ## How AI Tools Use It
 
-Generated AI rules tell agents to:
+The generated instruction files tell AI agents to:
 
-- read `specs/` before coding
-- follow domain rules and ADRs
-- avoid secrets, raw production logs, customer data, and PII
-- create solved cases in `specs/cases/` after meaningful fixes
-- reuse prior cases when similar problems appear
-- update case usage metadata: `Times Used`, `Successful Uses`, `Score`
+- **Read `specs/` before coding** — architecture, domain rules, and ADRs are the source of truth
+- **Follow engineering standards** — coding rules, testing conventions, and naming patterns
+- **Avoid prohibited content** — secrets, raw production logs, customer data, and PII
+- **Create solved cases** — document meaningful fixes in `specs/cases/` for future reuse
+- **Reuse prior cases** — check existing cases before solving similar problems
+- **Track case effectiveness** — update `Times Used`, `Successful Uses`, and `Score` metadata
+
+## Supported AI Tools
+
+| Tool | Instruction File | Auto-detect |
+|------|-----------------|-------------|
+| Claude (Anthropic) | `CLAUDE.md` | ✓ |
+| Codex (OpenAI) | `CODEX.md` | ✓ |
+| Cursor | `.cursor/rules/specman.mdc` | — |
+| GitHub Copilot | `.github/copilot-instructions.md` | — |
+| Generic Agents | `AGENTS.md` | — |
 
 ## License
 
