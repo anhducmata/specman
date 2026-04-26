@@ -1,14 +1,19 @@
-import { spawn } from 'node:child_process';
-import { icons } from './ui.js';
+import { spawn, execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { icons, c, printSection, printCallout } from './ui.js';
 
 export type AssistantCli = 'claude' | 'codex' | 'cursor';
 
-const assistants: AssistantCli[] = ['claude', 'codex', 'cursor'];
+const ASSISTANTS: AssistantCli[] = ['claude', 'codex', 'cursor'];
+
+// ─── Detection ────────────────────────────────────────────────────────────────
 
 export function normalizeAssistant(value?: string): AssistantCli | null {
   if (!value) return null;
   const normalized = value.toLowerCase();
-  return assistants.includes(normalized as AssistantCli) ? normalized as AssistantCli : null;
+  return ASSISTANTS.includes(normalized as AssistantCli) ? (normalized as AssistantCli) : null;
 }
 
 export function suggestAssistant(value?: string): AssistantCli | null {
@@ -17,37 +22,143 @@ export function suggestAssistant(value?: string): AssistantCli | null {
   const exact = normalizeAssistant(normalized);
   if (exact) return exact;
 
-  const prefixMatch = assistants.find(assistant => assistant.startsWith(normalized) || normalized.startsWith(assistant));
+  const prefixMatch = ASSISTANTS.find(
+    (a) => a.startsWith(normalized) || normalized.startsWith(a),
+  );
   if (prefixMatch) return prefixMatch;
 
   let best: { assistant: AssistantCli; distance: number } | null = null;
-  for (const assistant of assistants) {
+  for (const assistant of ASSISTANTS) {
     const distance = levenshtein(normalized, assistant);
     if (best === null || distance < best.distance) {
       best = { assistant, distance };
     }
   }
-
   return best && best.distance <= 2 ? best.assistant : null;
 }
 
+/**
+ * Detect which AI CLI tools are available in PATH.
+ */
+export async function detectAvailableAssistants(): Promise<AssistantCli[]> {
+  const checks: Array<{ name: AssistantCli; bin: string }> = [
+    { name: 'claude', bin: 'claude' },
+    { name: 'codex',  bin: 'codex'  },
+  ];
+
+  const results = await Promise.all(
+    checks.map(async ({ name, bin }) => {
+      const found = await isCommandAvailable(bin);
+      return found ? name : null;
+    }),
+  );
+
+  return results.filter((r): r is AssistantCli => r !== null);
+}
+
+function isCommandAvailable(command: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile('which', [command], (err) => resolve(!err));
+  });
+}
+
+// ─── Runner ───────────────────────────────────────────────────────────────────
+
 export async function runAssistant(root: string, assistant: AssistantCli, prompt: string): Promise<void> {
   if (assistant === 'cursor') {
-    console.log(`${icons.warn} Cursor does not expose a stable local CLI for this workflow yet.`);
-    console.log('Use this prompt in Cursor Agent instead:\n');
+    console.log(`  ${icons.warn}  Cursor does not expose a stable local CLI for this workflow.`);
+    console.log(`  Use this prompt in Cursor Agent instead:\n`);
     console.log(prompt);
     return;
   }
 
-  const command = assistant === 'claude' ? 'claude' : 'codex';
-  const args = assistant === 'claude' ? ['--print', prompt] : [prompt];
+  const { command, args } = buildCommand(assistant, prompt);
+  console.log();
+  console.log(`  ${icons.info}  Running ${c.cyan(command)} in ${c.dim(root)} …`);
+  console.log();
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { cwd: root, stdio: 'inherit' });
+  await spawnInherited(command, args, root);
+}
+
+/**
+ * Run an AI CLI in non-interactive / full-auto mode.
+ * Used by sync --specs-to-code, sync --code-to-specs, gap --ai.
+ */
+export async function runAssistantNonInteractive(
+  root: string,
+  assistant: AssistantCli,
+  prompt: string,
+  allowWrites: boolean,
+): Promise<void> {
+  if (assistant === 'cursor') {
+    printManualPromptFallback(prompt);
+    return;
+  }
+
+  const { command, args } = buildNonInteractiveCommand(assistant, prompt, allowWrites);
+  console.log();
+  console.log(`  ${icons.info}  Running ${c.cyan(command)} ${c.dim('(non-interactive)')} …`);
+  console.log();
+
+  await spawnInherited(command, args, root);
+}
+
+/**
+ * Build the correct invocation for a given assistant in interactive mode.
+ */
+function buildCommand(assistant: AssistantCli, prompt: string): { command: string; args: string[] } {
+  switch (assistant) {
+    case 'claude':
+      // claude -p "prompt" --dangerously-skip-permissions
+      return { command: 'claude', args: ['-p', prompt, '--dangerously-skip-permissions'] };
+    case 'codex':
+      // codex exec "prompt" with disk read+write permissions
+      return {
+        command: 'codex',
+        args: [
+          'exec', prompt,
+          '-c', 'sandbox_permissions=["disk-full-read-access","disk-write-access"]',
+        ],
+      };
+    default:
+      return { command: assistant, args: [prompt] };
+  }
+}
+
+/**
+ * Build the correct invocation for a given assistant in non-interactive / headless mode.
+ */
+function buildNonInteractiveCommand(
+  assistant: AssistantCli,
+  prompt: string,
+  allowWrites: boolean,
+): { command: string; args: string[] } {
+  switch (assistant) {
+    case 'claude': {
+      const args = ['-p', prompt, '--dangerously-skip-permissions'];
+      return { command: 'claude', args };
+    }
+    case 'codex': {
+      const perms = allowWrites
+        ? '["disk-full-read-access","disk-write-access","network-outbound-disabled"]'
+        : '["disk-full-read-access","network-outbound-disabled"]';
+      return {
+        command: 'codex',
+        args: ['exec', prompt, '-c', `sandbox_permissions=${perms}`],
+      };
+    }
+    default:
+      return { command: assistant, args: [prompt] };
+  }
+}
+
+function spawnInherited(command: string, args: string[], cwd: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, stdio: 'inherit' });
     child.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') {
-        console.log(`${icons.error} ${command} CLI was not found in PATH.`);
-        console.log('Use `specman init --prompt` to print the prompt instead.');
+        console.log(`  ${icons.error}  ${c.redB(command)} CLI was not found in PATH.`);
+        console.log(`  Install it or use ${c.cyan('specman init --prompt')} to print the prompt instead.`);
         resolve();
         return;
       }
@@ -63,20 +174,66 @@ export async function runAssistant(root: string, assistant: AssistantCli, prompt
   });
 }
 
-export function specsPrompt(): string {
-  return `You are helping document this repository with specman.
+// ─── Manual fallback ──────────────────────────────────────────────────────────
 
-Task:
-1. Inspect the repository structure and existing source files.
-2. Create or update the files under \`specs/\` using the existing specman structure.
-3. Fill in product requirements, engineering rules, architecture notes, domain rules, ADR context, and open questions.
-4. Keep uncertain claims as draft assumptions.
-5. Do not include secrets, raw production logs, customer data, or PII.
-
-Output:
-- If you can edit files directly, update the \`specs/\` files.
-- If you cannot edit files directly, return markdown content grouped by target file path.`;
+export function printManualPromptFallback(prompt: string): void {
+  printSection('Manual Prompt');
+  printCallout('info', [
+    'No AI CLI found — copy and paste this prompt into any AI tool:',
+  ]);
+  console.log(prompt);
+  console.log();
 }
+
+// ─── Prompts ──────────────────────────────────────────────────────────────────
+
+function readPrompt(filename: string, specsDir?: string): string {
+  try {
+    const currentDir = dirname(fileURLToPath(import.meta.url));
+    const promptsDir = join(currentDir, '..', '..', 'prompts');
+    let content = readFileSync(join(promptsDir, filename), 'utf-8');
+    if (specsDir) {
+      content = content.replace(/\{\{specsDir\}\}/g, specsDir);
+    }
+    return content.trim();
+  } catch (error) {
+    console.error(`  ${icons.error}  Failed to load prompt ${filename}:`, error);
+    return 'Error loading prompt.';
+  }
+}
+
+/**
+ * Prompt to fill specs from scratch (used by specman init / specman init --with <tool>).
+ */
+export function specsPrompt(): string {
+  return readPrompt('specs.md');
+}
+
+/**
+ * Prompt for specman sync --code-to-specs:
+ * AI reads the current code and updates specs to reflect reality.
+ */
+export function codeToSpecsPrompt(specsDir: string): string {
+  return readPrompt('code-to-specs.md', specsDir);
+}
+
+/**
+ * Prompt for specman sync --specs-to-code:
+ * AI reads the specs and implements them into the codebase.
+ */
+export function specsToCodePrompt(specsDir: string): string {
+  return readPrompt('specs-to-code.md', specsDir);
+}
+
+/**
+ * Prompt for specman gap --ai:
+ * AI reads both specs and code, reports gaps — does NOT modify anything.
+ */
+export function gapPrompt(specsDir: string): string {
+  return readPrompt('gap.md', specsDir);
+}
+
+// ─── Levenshtein ──────────────────────────────────────────────────────────────
 
 function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
@@ -88,14 +245,9 @@ function levenshtein(a: string, b: string): number {
     const curr = [i];
     for (let j = 1; j <= b.length; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(
-        curr[j - 1] + 1,
-        prev[j] + 1,
-        prev[j - 1] + cost,
-      );
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
     }
     for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
   }
-
   return prev[b.length];
 }
