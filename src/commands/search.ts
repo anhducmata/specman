@@ -1,13 +1,14 @@
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.js';
 import { listFilesRecursive, readTextFile } from '../core/files.js';
+import { icons, withLoader } from '../core/ui.js';
 
 /**
  * Search specs, ADRs, domain rules, and solved cases.
  */
 export async function searchCommand(root: string, query: string): Promise<void> {
   if (!query || query.trim().length === 0) {
-    console.log('❌ Please provide a search query. Usage: specman search <query>');
+    console.log(`${icons.error} Please provide a search query. Usage: specman search <query>`);
     process.exit(1);
   }
 
@@ -15,55 +16,55 @@ export async function searchCommand(root: string, query: string): Promise<void> 
   const specsDir = join(root, config.specsDir);
   const queryLower = query.toLowerCase();
 
-  console.log(`🔍 Searching for "${query}" in ${config.specsDir}/...\n`);
+  const results = await withLoader(`Searching for "${query}"`, async () => {
+    const allFiles = await listFilesRecursive(specsDir);
+    const textFiles = allFiles.filter(f =>
+      f.endsWith('.md') || f.endsWith('.yaml') || f.endsWith('.yml'),
+    );
 
-  const allFiles = await listFilesRecursive(specsDir);
-  const textFiles = allFiles.filter(f =>
-    f.endsWith('.md') || f.endsWith('.yaml') || f.endsWith('.yml'),
-  );
+    const fileResults: { file: string; matches: { line: number; text: string }[] }[] = [];
+    let totalMatches = 0;
 
-  let totalMatches = 0;
-  let matchingFiles = 0;
+    for (const file of textFiles) {
+      const content = await readTextFile(file);
+      if (!content) continue;
 
-  for (const file of textFiles) {
-    const content = await readTextFile(file);
-    if (!content) continue;
+      const lines = content.split('\n');
+      const matches: { line: number; text: string }[] = [];
 
-    const lines = content.split('\n');
-    const matches: { line: number; text: string }[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().includes(queryLower)) {
+          matches.push({ line: i + 1, text: lines[i].trim() });
+        }
+      }
 
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].toLowerCase().includes(queryLower)) {
-        matches.push({ line: i + 1, text: lines[i].trim() });
+      if (matches.length > 0) {
+        fileResults.push({ file, matches });
+        totalMatches += matches.length;
       }
     }
+    return { fileResults, totalMatches };
+  });
 
-    if (matches.length > 0) {
-      matchingFiles++;
-      const relativePath = file.replace(root + '/', '');
-      console.log(`📄 ${relativePath} (${matches.length} match${matches.length > 1 ? 'es' : ''}):`);
+  if (results.fileResults.length === 0) {
+    console.log('No matches found.');
+  } else {
+    for (const res of results.fileResults) {
+      const relativePath = res.file.replace(root + '/', '');
+      console.log(`· ${relativePath} (${res.matches.length} match${res.matches.length > 1 ? 'es' : ''}):`);
 
-      // Show up to 5 matches per file
-      const showMatches = matches.slice(0, 5);
+      const showMatches = res.matches.slice(0, 5);
       for (const m of showMatches) {
-        // Highlight the query in the line
         const highlighted = highlightMatch(m.text, query);
         console.log(`   L${m.line}: ${highlighted}`);
       }
 
-      if (matches.length > 5) {
-        console.log(`   ... and ${matches.length - 5} more match(es)`);
+      if (res.matches.length > 5) {
+        console.log(`   ... and ${res.matches.length - 5} more match(es)`);
       }
-
       console.log();
-      totalMatches += matches.length;
     }
-  }
-
-  if (matchingFiles === 0) {
-    console.log('No matches found.');
-  } else {
-    console.log(`Found ${totalMatches} match(es) in ${matchingFiles} file(s).`);
+    console.log(`Found ${results.totalMatches} match(es) in ${results.fileResults.length} file(s).`);
   }
 }
 

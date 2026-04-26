@@ -5,6 +5,7 @@ import { loadConfig } from '../core/config.js';
 import { safeWriteFile, toKebabCase } from '../core/files.js';
 import { caseFromData } from '../core/templates.js';
 import { redactSecrets, hasSecrets } from '../core/redactor.js';
+import { icons } from '../core/ui.js';
 import type { CaseData } from '../types.js';
 
 /**
@@ -14,7 +15,7 @@ export async function captureCommand(root: string): Promise<void> {
   const config = await loadConfig(root);
   const rl = createInterface({ input: stdin, output: stdout });
 
-  console.log('📝 Capture a Solved Case\n');
+  console.log('Capture a Solved Case\n');
   console.log('Answer the following questions. Press Enter to skip optional fields.\n');
 
   try {
@@ -59,14 +60,14 @@ export async function captureCommand(root: string): Promise<void> {
 
     // Check for secrets
     if (hasSecrets(content)) {
-      console.log('\n⚠️  Potential secrets detected! Redacting before saving...');
+      console.log(`\n${icons.warn} Potential secrets detected! Redacting before saving...`);
       content = redactSecrets(content);
     }
 
     // Check size
     const sizeBytes = Buffer.byteLength(content, 'utf-8');
     if (sizeBytes > config.caseMaxBytes) {
-      console.log(`\n⚠️  Case is large (${sizeBytes} bytes > ${config.caseMaxBytes} limit).`);
+      console.log(`\n${icons.warn} Case is large (${sizeBytes} bytes > ${config.caseMaxBytes} limit).`);
       console.log('   Consider summarizing to reduce size.');
     }
 
@@ -76,10 +77,10 @@ export async function captureCommand(root: string): Promise<void> {
     const written = await safeWriteFile(filePath, content);
 
     if (written) {
-      console.log(`\n✅ Case saved: ${filePath}`);
+      console.log(`\n${icons.success} Case saved: ${filePath}`);
       console.log('   Status: Draft (review and update as needed)');
     } else {
-      console.log(`\n⚠️  File already exists: ${filePath}`);
+      console.log(`\n${icons.warn} File already exists: ${filePath}`);
       console.log('   Use `specman add case` with --force to overwrite.');
     }
   } finally {

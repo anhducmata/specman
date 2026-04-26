@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { readTextFile } from '../core/files.js';
 import { loadStatus } from '../core/config.js';
+import { icons } from '../core/ui.js';
 
 /**
  * Review generated assumptions and detected stack.
@@ -9,7 +10,7 @@ export async function reviewCommand(root: string): Promise<void> {
   const status = await loadStatus(root);
 
   if (!status.initialized) {
-    console.log('❌ specman has not been initialized. Run `specman init` first.');
+    console.log(`${icons.error} specman has not been initialized. Run \`specman init\` first.`);
     process.exit(1);
   }
 
@@ -17,15 +18,13 @@ export async function reviewCommand(root: string): Promise<void> {
 
   // Print approval status
   if (status.approved) {
-    console.log(`✅ Specs are APPROVED (at ${status.approvedAt} by ${status.approvedBy})\n`);
+    console.log(`${icons.success} Specs are APPROVED (at ${status.approvedAt} by ${status.approvedBy})\n`);
   } else {
-    console.log('⚠️  Specs are NOT YET APPROVED — treat as draft assumptions only.\n');
+    console.log(`${icons.warn} Specs are NOT YET APPROVED — treat as draft assumptions only.\n`);
   }
 
   // Print detected stack
-  console.log('━'.repeat(60));
-  console.log('📦 DETECTED STACK');
-  console.log('━'.repeat(60));
+  console.log('Detected stack:');
   const stackContent = await readTextFile(join(specsDir, '01-detected-stack.md'));
   if (stackContent) {
     // Extract the Technologies section
@@ -41,9 +40,7 @@ export async function reviewCommand(root: string): Promise<void> {
   console.log();
 
   // Print assumptions
-  console.log('━'.repeat(60));
-  console.log('📝 ASSUMPTIONS');
-  console.log('━'.repeat(60));
+  console.log('Assumptions:');
   const assumptionsContent = await readTextFile(join(specsDir, '02-assumptions.md'));
   if (assumptionsContent) {
     // Print without the header and draft warning
@@ -60,9 +57,7 @@ export async function reviewCommand(root: string): Promise<void> {
   console.log();
 
   // Print open questions
-  console.log('━'.repeat(60));
-  console.log('❓ OPEN QUESTIONS');
-  console.log('━'.repeat(60));
+  console.log('Open questions:');
   const questionsContent = await readTextFile(join(specsDir, '03-open-questions.md'));
   if (questionsContent) {
     const lines = questionsContent.split('\n');
@@ -78,10 +73,7 @@ export async function reviewCommand(root: string): Promise<void> {
   console.log();
 
   // Print action items
-  console.log('━'.repeat(60));
-  console.log('🔎 REVIEW CHECKLIST');
-  console.log('━'.repeat(60));
-  console.log('Please review the following:');
+  console.log('Review checklist:');
   console.log('  1. Verify detected stack is correct');
   console.log('  2. Confirm or correct each assumption');
   console.log('  3. Answer open questions');
@@ -90,6 +82,6 @@ export async function reviewCommand(root: string): Promise<void> {
   console.log();
 
   if (!status.approved) {
-    console.log('👉 When done reviewing, run `specman approve` to mark specs as approved.');
+    console.log('-> When done reviewing, run `specman approve` to mark specs as approved.');
   }
 }

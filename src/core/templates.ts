@@ -47,12 +47,12 @@ ${stackLines}
 ${fileLines}
 
 ## Project Structure
-- Has source code: ${scan.hasSrc ? '✅' : '❌'}
-- Has tests: ${scan.hasTests ? '✅' : '❌'}
-- Has Docker: ${scan.hasDocker ? '✅' : '❌'}
-- Has CI/CD: ${scan.hasCi ? '✅' : '❌'}
-- Has API spec: ${scan.hasApi ? '✅' : '❌'}
-- Has migrations: ${scan.hasMigrations ? '✅' : '❌'}
+- Has source code: ${scan.hasSrc ? 'Yes' : 'No'}
+- Has tests: ${scan.hasTests ? 'Yes' : 'No'}
+- Has Docker: ${scan.hasDocker ? 'Yes' : 'No'}
+- Has CI/CD: ${scan.hasCi ? 'Yes' : 'No'}
+- Has API spec: ${scan.hasApi ? 'Yes' : 'No'}
+- Has migrations: ${scan.hasMigrations ? 'Yes' : 'No'}
 `;
 }
 

@@ -4,26 +4,25 @@ import { saveConfig, saveStatus, ensureSpecmanDir } from '../core/config.js';
 import { safeWriteFile } from '../core/files.js';
 import * as templates from '../core/templates.js';
 import { DEFAULT_CONFIG, DEFAULT_STATUS } from '../types.js';
+import { withLoader, icons } from '../core/ui.js';
 
 /**
  * Initialize specman in the current project.
  * Scans the project, creates specs structure, generates draft assumptions.
  */
 export async function initCommand(root: string): Promise<void> {
-  console.log('🔍 Scanning project...\n');
-
-  const scan = await scanProject(root);
+  const scan = await withLoader('Scanning project', () => scanProject(root));
   const specsDir = join(root, 'specs');
 
   // Report detected stack
   if (scan.detectedStack.length > 0) {
-    console.log('📦 Detected stack:');
+    console.log('Detected stack:');
     for (const tech of scan.detectedStack) {
-      console.log(`   • ${tech.name} (from ${tech.source})`);
+      console.log(`   ${icons.bullet} ${tech.name} (from ${tech.source})`);
     }
     console.log();
   } else {
-    console.log('⚠️  No technologies detected. You can add them manually later.\n');
+    console.log(`${icons.warn} No technologies detected. You can add them manually later.\n`);
   }
 
   // Create .specman directory
@@ -117,9 +116,9 @@ export async function initCommand(root: string): Promise<void> {
   console.log('       ├── forbidden.md');
   console.log('       └── checklist.md');
   console.log();
-  console.log(`   ✅ ${created} files created, ${skipped} files skipped (already exist)`);
+  console.log(`   ${icons.success} ${created} files created, ${skipped} files skipped (already exist)`);
   console.log();
-  console.log('📋 Next steps:');
+  console.log('Next steps:');
   console.log('   1. Run `specman review` to see generated assumptions');
   console.log('   2. Edit specs manually to add your project context');
   console.log('   3. Run `specman approve` when specs are ready');

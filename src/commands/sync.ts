@@ -1,13 +1,14 @@
 import { join } from 'node:path';
 import { loadConfig, loadStatus } from '../core/config.js';
 import { safeWriteFile } from '../core/files.js';
+import { icons, withLoader } from '../core/ui.js';
 
 /**
  * Generate AI tool instruction files.
  */
 export async function syncCommand(root: string, target: string): Promise<void> {
   if (target !== 'all') {
-    console.log(`❌ Unknown sync target: "${target}". Use \`specman sync all\`.`);
+    console.log(`${icons.error} Unknown sync target: "${target}". Use \`specman sync all\`.`);
     process.exit(1);
   }
 
@@ -15,52 +16,54 @@ export async function syncCommand(root: string, target: string): Promise<void> {
   const status = await loadStatus(root);
 
   if (!status.initialized) {
-    console.log('❌ specman has not been initialized. Run `specman init` first.');
+    console.log(`${icons.error} specman has not been initialized. Run \`specman init\` first.`);
     process.exit(1);
   }
 
   const approvalNote = status.approved
     ? 'Specs have been reviewed and approved as source of truth.'
-    : '⚠️ Specs have NOT been approved yet. Treat all specs as draft assumptions only.';
+    : `${icons.warn} Specs have NOT been approved yet. Treat all specs as draft assumptions only.`;
 
   let generated = 0;
 
-  // ─── CLAUDE.md ───
-  if (config.aiTools.claude) {
-    const content = generateClaudeMd(config.specsDir, approvalNote);
-    await safeWriteFile(join(root, 'CLAUDE.md'), content, true);
-    console.log('  ✅ CLAUDE.md');
-    generated++;
-  }
+  await withLoader('Generating AI instructions', async () => {
+    // ─── CLAUDE.md ───
+    if (config.aiTools.claude) {
+      const content = generateClaudeMd(config.specsDir, approvalNote);
+      await safeWriteFile(join(root, 'CLAUDE.md'), content, true);
+      console.log(`   ${icons.success} CLAUDE.md`);
+      generated++;
+    }
 
-  // ─── AGENTS.md ───
-  if (config.aiTools.agents) {
-    const content = generateAgentsMd(config.specsDir, approvalNote);
-    await safeWriteFile(join(root, 'AGENTS.md'), content, true);
-    console.log('  ✅ AGENTS.md');
-    generated++;
-  }
+    // ─── AGENTS.md ───
+    if (config.aiTools.agents) {
+      const content = generateAgentsMd(config.specsDir, approvalNote);
+      await safeWriteFile(join(root, 'AGENTS.md'), content, true);
+      console.log(`   ${icons.success} AGENTS.md`);
+      generated++;
+    }
 
-  // ─── .cursor/rules/specman.mdc ───
-  if (config.aiTools.cursor) {
-    const content = generateCursorRules(config.specsDir, approvalNote);
-    await safeWriteFile(join(root, '.cursor', 'rules', 'specman.mdc'), content, true);
-    console.log('  ✅ .cursor/rules/specman.mdc');
-    generated++;
-  }
+    // ─── .cursor/rules/specman.mdc ───
+    if (config.aiTools.cursor) {
+      const content = generateCursorRules(config.specsDir, approvalNote);
+      await safeWriteFile(join(root, '.cursor', 'rules', 'specman.mdc'), content, true);
+      console.log(`   ${icons.success} .cursor/rules/specman.mdc`);
+      generated++;
+    }
 
-  // ─── .github/copilot-instructions.md ───
-  if (config.aiTools.copilot) {
-    const content = generateCopilotInstructions(config.specsDir, approvalNote);
-    await safeWriteFile(join(root, '.github', 'copilot-instructions.md'), content, true);
-    console.log('  ✅ .github/copilot-instructions.md');
-    generated++;
-  }
+    // ─── .github/copilot-instructions.md ───
+    if (config.aiTools.copilot) {
+      const content = generateCopilotInstructions(config.specsDir, approvalNote);
+      await safeWriteFile(join(root, '.github', 'copilot-instructions.md'), content, true);
+      console.log(`   ${icons.success} .github/copilot-instructions.md`);
+      generated++;
+    }
+  });
 
-  console.log(`\n🎯 Generated ${generated} AI instruction file(s).`);
+  console.log(`Generated ${generated} AI instruction file(s).`);
 
   if (!status.approved) {
-    console.log('\n⚠️  Specs are not yet approved. AI tools will treat them as assumptions.');
+    console.log(`\n${icons.warn} Specs are not yet approved. AI tools will treat them as assumptions.`);
     console.log('   Run `specman approve` to mark specs as source of truth.');
   }
 }

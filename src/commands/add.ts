@@ -3,6 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { loadConfig } from '../core/config.js';
 import { safeWriteFile, toKebabCase } from '../core/files.js';
 import * as templates from '../core/templates.js';
+import { icons } from '../core/ui.js';
 
 type AddType = 'spec' | 'domain' | 'adr' | 'case' | 'rule';
 
@@ -18,12 +19,12 @@ export async function addCommand(
   const validTypes: AddType[] = ['spec', 'domain', 'adr', 'case', 'rule'];
 
   if (!validTypes.includes(type as AddType)) {
-    console.log(`❌ Unknown type: "${type}". Supported types: ${validTypes.join(', ')}`);
+    console.log(`${icons.error} Unknown type: "${type}". Supported types: ${validTypes.join(', ')}`);
     process.exit(1);
   }
 
   if (!name) {
-    console.log(`❌ Name is required. Usage: specman add ${type} <name>`);
+    console.log(`${icons.error} Name is required. Usage: specman add ${type} <name>`);
     process.exit(1);
   }
 
@@ -67,9 +68,9 @@ export async function addCommand(
   const written = await safeWriteFile(filePath, content, force);
 
   if (written) {
-    console.log(`✅ Created: ${filePath}`);
+    console.log(`${icons.success} Created: ${filePath}`);
   } else {
-    console.log(`⚠️  File already exists: ${filePath}`);
+    console.log(`${icons.warn} File already exists: ${filePath}`);
     console.log('   Use --force to overwrite.');
   }
 }

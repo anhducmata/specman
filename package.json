@@ -1,6 +1,6 @@
 {
   "name": "specman",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI-first spec management CLI for software teams",
   "type": "module",
   "main": "./dist/cli.js",
@@ -40,7 +40,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ducnguyen-tw/specman.git"
+    "url": "git+https://github.com/anhducmata/specman.git"
   },
   "dependencies": {
     "commander": "^13.1.0",

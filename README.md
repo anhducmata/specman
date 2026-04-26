@@ -16,12 +16,13 @@ AI-first spec management CLI for software teams.
 ## Install
 
 ```bash
-# Clone and install locally
-git clone <repo-url>
-cd specman
-npm install
-npm run build
-npm link
+npm install -g specman
+```
+
+Alternatively, run it via npx:
+
+```bash
+npx specman init
 ```
 
 ## Quick Start

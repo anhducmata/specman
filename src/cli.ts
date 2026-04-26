@@ -19,7 +19,7 @@ const program = new Command();
 program
   .name('specman')
   .description('AI-first spec management CLI for software teams')
-  .version('0.1.0');
+  .version('0.1.1');
 
 // ─── specman init ───
 program
