@@ -14,3 +14,14 @@ Thumbs.db
 
 # Test coverage
 coverage/
+
+# Specman self-generated files (from dogfooding)
+specs/
+.specman/
+.specmanignore
+SPECMAN.md
+CLAUDE.md
+CODEX.md
+AGENTS.md
+.cursor/
+.github/copilot-instructions.md

@@ -2,7 +2,7 @@ import { spawn, execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { icons, c, printSection, printCallout } from './ui.js';
+import { icons, c, printSection, printCallout, withLoader } from './ui.js';
 
 export type AssistantCli = 'claude' | 'codex' | 'cursor';
 
@@ -89,6 +89,7 @@ export async function runAssistantNonInteractive(
   assistant: AssistantCli,
   prompt: string,
   allowWrites: boolean,
+  spinnerLabel?: string,
 ): Promise<void> {
   if (assistant === 'cursor') {
     printManualPromptFallback(prompt);
@@ -96,11 +97,15 @@ export async function runAssistantNonInteractive(
   }
 
   const { command, args } = buildNonInteractiveCommand(assistant, prompt, allowWrites);
-  console.log();
-  console.log(`  ${icons.info}  Running ${c.cyan(command)} ${c.dim('(non-interactive)')} …`);
-  console.log();
-
-  await spawnInherited(command, args, root);
+  
+  if (spinnerLabel) {
+    await withLoader(spinnerLabel, () => spawnHidden(command, args, root));
+  } else {
+    console.log();
+    console.log(`  ${icons.info}  Running ${c.cyan(command)} ${c.dim('(non-interactive)')} …`);
+    console.log();
+    await spawnInherited(command, args, root);
+  }
 }
 
 /**
@@ -159,6 +164,28 @@ function spawnInherited(command: string, args: string[], cwd: string): Promise<v
     child.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') {
         console.log(`  ${icons.error}  ${c.redB(command)} CLI was not found in PATH.`);
+        console.log(`  Install it or use ${c.cyan('specman init --prompt')} to print the prompt instead.`);
+        resolve();
+        return;
+      }
+      reject(error);
+    });
+    child.on('close', (code) => {
+      if (code && code !== 0) {
+        reject(new Error(`${command} exited with code ${code}`));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function spawnHidden(command: string, args: string[], cwd: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, stdio: 'ignore' });
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') {
+        console.log(`\n  ${icons.error}  ${c.redB(command)} CLI was not found in PATH.`);
         console.log(`  Install it or use ${c.cyan('specman init --prompt')} to print the prompt instead.`);
         resolve();
         return;

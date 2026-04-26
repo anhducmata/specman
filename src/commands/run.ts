@@ -9,6 +9,7 @@ import {
   selectMenu,
   isInteractiveTerminal,
   confirm,
+  multiSelectMenu,
 } from '../core/ui.js';
 import {
   detectAvailableAssistants,
@@ -85,16 +86,48 @@ export async function runCommand(root: string, goalArgs: string[], options: RunO
 
   // --- Phase 1: Planning ---
   if (!hasPlan || (!options.resume && goal)) {
-    console.log(`  ${icons.info}  Generating execution plan...`);
     const prompt = autoPlanPrompt(specsDir, goal);
     // Write plan prompt to AI, AI writes to .specman/plan.md
-    await runAssistantNonInteractive(root, chosen, prompt, true);
+    await runAssistantNonInteractive(root, chosen, prompt, true, 'Generating execution plan...');
     
     if (!existsSync(planPath)) {
       console.log(`  ${icons.error}  The AI failed to create ${c.cyan('.specman/plan.md')}.`);
       return;
     }
     console.log(`  ${icons.success}  Plan generated at ${c.cyan('.specman/plan.md')}`);
+    
+    if (isInteractiveTerminal()) {
+      let planContent = readFileSync(planPath, 'utf-8');
+      const parsedTasks = parseTasks(planContent);
+      
+      if (parsedTasks.length > 0) {
+        const selectedTasks = await multiSelectMenu(
+          'Select tasks to execute',
+          parsedTasks.map((t, i) => ({
+            label: t.description,
+            value: i, // We'll use the index to identify the task
+            checked: true, // Check all by default
+          }))
+        );
+        
+        // If they deselected everything, or cancelled
+        if (selectedTasks.length === 0) {
+          console.log(`\n  ${icons.info}  No tasks selected. Execution cancelled. You can run ${c.cyan('specman run --resume')} later.`);
+          return;
+        }
+
+        // Mark unselected tasks as skipped/completed in the plan text so they are ignored
+        for (let i = 0; i < parsedTasks.length; i++) {
+          if (!selectedTasks.includes(i)) {
+            const task = parsedTasks[i];
+            // Replace '- [ ]' with '- [-]' or '- [x]' to skip it
+            planContent = planContent.replace(task.rawLine, task.rawLine.replace('- [ ]', '- [x]'));
+          }
+        }
+        
+        writeFileSync(planPath, planContent, 'utf-8');
+      }
+    }
   } else {
     console.log(`  ${icons.info}  Resuming existing plan from ${c.cyan('.specman/plan.md')}`);
   }
@@ -115,11 +148,10 @@ export async function runCommand(root: string, goalArgs: string[], options: RunO
     if (task.completed) continue;
 
     console.log();
-    printSection(`Executing Task: ${task.description}`);
     const prompt = autoStepPrompt(specsDir, goal || 'Continue existing plan', task.description, planContent);
 
     try {
-      await runAssistantNonInteractive(root, chosen, prompt, true);
+      await runAssistantNonInteractive(root, chosen, prompt, true, `Executing: ${task.description}`);
       // Mark as done
       planContent = planContent.replace(task.rawLine, task.rawLine.replace('- [ ]', '- [x]'));
       writeFileSync(planPath, planContent, 'utf-8');

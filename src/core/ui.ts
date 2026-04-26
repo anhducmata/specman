@@ -23,6 +23,10 @@ function ansi(code: string, text: string, enabled = supportsColorOutput()): stri
   return `\x1b[${code}m${text}\x1b[0m`;
 }
 
+export function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 // Colors
 export const c = {
   cyan:    (t: string) => ansi('36', t),
@@ -182,7 +186,7 @@ export function printSummaryBox(rows: SummaryRow[]): void {
     const icon   = row.icon ? `${row.icon}  ` : '   ';
     const label  = c.dim(row.label);
     const val    = row.color ? row.color(String(row.value)) : c.bold(String(row.value));
-    const raw    = `${icon}${row.label}  ${row.value}`;
+    const raw    = stripAnsi(`${icon}${row.label}  ${row.value}`);
     const padLen = Math.max(0, innerW - 2 - raw.length);
     console.log(`  ${c.dim('│')}  ${icon}${label}  ${val}${' '.repeat(padLen)}  ${c.dim('│')}`);
   }
@@ -280,7 +284,7 @@ export async function selectMenu<T extends string>(
     for (let i = 0; i < choices.length; i++) {
       const choice = choices[i];
       const isSelected = i === selectedIndex;
-      const prefix = isSelected ? c.cyan('❯') : ' ';
+      const prefix = isSelected ? c.cyan('*') : ' ';
       const label = isSelected ? c.cyanB(choice.label) : choice.label;
       const hint = c.dim(`(${choice.key})`);
       output += `  ${prefix} ${label}  ${hint}\n`;
@@ -322,6 +326,254 @@ export async function selectMenu<T extends string>(
           console.log();
           resolve(choices[selectedIndex].value);
         }
+      }
+    };
+
+    const cleanup = () => {
+      stdout.write('\x1B[?25h'); // show cursor
+      if (stdin.isTTY) {
+        stdin.setRawMode(false);
+      }
+      stdin.removeListener('keypress', onKeypress);
+      stdin.pause();
+    };
+
+    readline.emitKeypressEvents(stdin);
+    if (stdin.isTTY) {
+      stdin.setRawMode(true);
+    }
+    stdin.resume();
+    stdin.on('keypress', onKeypress);
+  });
+}
+
+export interface MultiSelectChoice<T> {
+  label: string;
+  value: T;
+  checked: boolean;
+}
+
+/**
+ * Render an interactive multi-select checkbox menu.
+ */
+export async function multiSelectMenu<T>(
+  title: string,
+  choices: MultiSelectChoice<T>[],
+): Promise<T[]> {
+  printSection(title);
+
+  if (!isInteractiveTerminal()) {
+    return choices.filter(c => c.checked).map(c => c.value);
+  }
+
+  const items = choices.map(c => ({ ...c }));
+  let selectedIndex = 0;
+  const totalItems = items.length + 1;
+
+  stdout.write('\x1B[?25l'); // hide cursor
+
+  const render = () => {
+    let output = '';
+    for (let i = 0; i < items.length; i++) {
+      const choice = items[i];
+      const isFocused = i === selectedIndex;
+      const prefix = isFocused ? c.cyan('*') : ' ';
+      const checkbox = choice.checked ? c.greenB('[x]') : c.dim('[ ]');
+      const label = isFocused ? c.cyanB(choice.label) : choice.label;
+      output += `  ${prefix} ${checkbox} ${label}\n`;
+    }
+    
+    const isFocused = selectedIndex === items.length;
+    const prefix = isFocused ? c.cyan('*') : ' ';
+    const label = isFocused ? c.cyanB('Run Selected / Generate All') : 'Run Selected / Generate All';
+    output += `  ${prefix} ${c.dim('→')} ${label}\n`;
+    
+    stdout.write(output);
+  };
+
+  const clearLines = (n: number) => {
+    stdout.write(`\x1B[${n}A\x1B[J`);
+  };
+
+  render();
+
+  return new Promise<T[]>((resolve) => {
+    const onKeypress = (str: string, key: readline.Key) => {
+      if (key && key.name === 'up') {
+        selectedIndex = (selectedIndex - 1 + totalItems) % totalItems;
+        clearLines(totalItems);
+        render();
+      } else if (key && key.name === 'down') {
+        selectedIndex = (selectedIndex + 1) % totalItems;
+        clearLines(totalItems);
+        render();
+      } else if (key && key.name === 'space') {
+        if (selectedIndex < items.length) {
+          items[selectedIndex].checked = !items[selectedIndex].checked;
+          clearLines(totalItems);
+          render();
+        } else {
+          cleanup();
+          console.log();
+          resolve(items.filter(c => c.checked).map(c => c.value));
+        }
+      } else if (key && (key.name === 'return' || key.name === 'enter')) {
+        cleanup();
+        console.log();
+        resolve(items.filter(c => c.checked).map(c => c.value));
+      } else if (key && key.ctrl && key.name === 'c') {
+        cleanup();
+        process.exit(0);
+      }
+    };
+
+    const cleanup = () => {
+      stdout.write('\x1B[?25h'); // show cursor
+      if (stdin.isTTY) {
+        stdin.setRawMode(false);
+      }
+      stdin.removeListener('keypress', onKeypress);
+      stdin.pause();
+    };
+
+    readline.emitKeypressEvents(stdin);
+    if (stdin.isTTY) {
+      stdin.setRawMode(true);
+    }
+    stdin.resume();
+    stdin.on('keypress', onKeypress);
+  });
+}
+
+export interface TreeSelectNode<T> {
+  label: string;
+  value?: T;
+  checked: boolean;
+  children?: TreeSelectNode<T>[];
+}
+
+interface FlatTreeNode<T> {
+  node: TreeSelectNode<T>;
+  prefix: string;
+}
+
+/**
+ * Render an interactive tree-select menu.
+ */
+export async function multiSelectTree<T>(
+  title: string,
+  rootLabel: string,
+  rootNodes: TreeSelectNode<T>[],
+): Promise<T[]> {
+  printSection(title);
+
+  const flatNodes: FlatTreeNode<T>[] = [];
+
+  const flatten = (nodes: TreeSelectNode<T>[], prefix: string) => {
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      const isLast = i === nodes.length - 1;
+      const connector = isLast ? '└── ' : '├── ';
+      flatNodes.push({ node, prefix: prefix + connector });
+
+      if (node.children) {
+        const childPrefix = prefix + (isLast ? '    ' : '│   ');
+        flatten(node.children, childPrefix);
+      }
+    }
+  };
+
+  flatten(rootNodes, '');
+
+  if (!isInteractiveTerminal()) {
+    return flatNodes.filter(n => n.node.checked && n.node.value !== undefined).map(n => n.node.value!);
+  }
+
+  let selectedIndex = 0;
+  const totalItems = flatNodes.length + 1; // +1 for "Initialize Selected"
+
+  stdout.write('\x1B[?25l'); // hide cursor
+
+  const render = () => {
+    let output = '';
+    output += `  ${c.cyanB(rootLabel)}\n`;
+
+    for (let i = 0; i < flatNodes.length; i++) {
+      const { node, prefix } = flatNodes[i];
+      const isFocused = i === selectedIndex;
+      const focusMarker = isFocused ? c.cyan('*') : ' ';
+      const checkbox = node.checked ? c.greenB('[x]') : c.dim('[ ]');
+      const label = isFocused ? c.cyanB(node.label) : c.dim(node.label);
+      output += `  ${focusMarker} ${c.dim(prefix)}${checkbox} ${label}\n`;
+    }
+    
+    const isFocused = selectedIndex === flatNodes.length;
+    const focusMarker = isFocused ? c.cyan('*') : ' ';
+    const label = isFocused ? c.cyanB('Initialize Selected') : 'Initialize Selected';
+    output += `\n  ${focusMarker} ${c.dim('→')} ${label}\n`;
+    
+    stdout.write(output);
+  };
+
+  const clearLines = (n: number) => {
+    stdout.write(`\x1B[${n}A\x1B[J`);
+  };
+
+  const toggleNode = (node: TreeSelectNode<T>, state: boolean) => {
+    node.checked = state;
+    if (node.children) {
+      for (const child of node.children) {
+        toggleNode(child, state);
+      }
+    }
+  };
+
+  const updateParents = (nodes: TreeSelectNode<T>[]): boolean => {
+    let anyChecked = false;
+    for (const node of nodes) {
+      if (node.children && node.children.length > 0) {
+        node.checked = updateParents(node.children);
+      }
+      if (node.checked) {
+        anyChecked = true;
+      }
+    }
+    return anyChecked;
+  };
+
+  render();
+
+  return new Promise<T[]>((resolve) => {
+    const linesToClear = flatNodes.length + 3; // rootLabel(1) + newline(1) + bottom button(1) = 3
+
+    const onKeypress = (str: string, key: readline.Key) => {
+      if (key && key.name === 'up') {
+        selectedIndex = (selectedIndex - 1 + totalItems) % totalItems;
+        clearLines(linesToClear);
+        render();
+      } else if (key && key.name === 'down') {
+        selectedIndex = (selectedIndex + 1) % totalItems;
+        clearLines(linesToClear);
+        render();
+      } else if (key && key.name === 'space') {
+        if (selectedIndex < flatNodes.length) {
+          const node = flatNodes[selectedIndex].node;
+          toggleNode(node, !node.checked);
+          updateParents(rootNodes);
+          clearLines(linesToClear);
+          render();
+        } else {
+          cleanup();
+          console.log();
+          resolve(flatNodes.filter(n => n.node.checked && n.node.value !== undefined).map(n => n.node.value!));
+        }
+      } else if (key && (key.name === 'return' || key.name === 'enter')) {
+        cleanup();
+        console.log();
+        resolve(flatNodes.filter(n => n.node.checked && n.node.value !== undefined).map(n => n.node.value!));
+      } else if (key && key.ctrl && key.name === 'c') {
+        cleanup();
+        process.exit(0);
       }
     };
 

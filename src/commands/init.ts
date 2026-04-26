@@ -10,10 +10,10 @@ import {
   printBanner,
   printSection,
   printBullet,
-  printTree,
-  printSummaryBox,
   printCallout,
   selectMenu,
+  multiSelectTree,
+  type TreeSelectNode,
   c,
 } from '../core/ui.js';
 import { syncCommand } from './sync.js';
@@ -97,42 +97,74 @@ export async function initCommand(root: string, options: InitOptions = {}): Prom
   // ── Create Files ──
   await ensureSpecmanDir(root);
 
-  // Define all files to create
-  const files: { path: string; content: string }[] = [
-    // Root specs
-    { path: join(specsDir, '00-project-overview.md'),  content: templates.projectOverview(scan) },
-    { path: join(specsDir, '01-detected-stack.md'),    content: templates.detectedStack(scan) },
-    { path: join(specsDir, '02-assumptions.md'),       content: templates.assumptions(scan) },
-    { path: join(specsDir, '03-open-questions.md'),    content: templates.openQuestions() },
-    // Product
-    { path: join(specsDir, 'product', 'requirements.md'), content: templates.productRequirements() },
-    // Engineering
-    { path: join(specsDir, 'engineering', 'coding-rules.md'),  content: templates.codingRules(scan) },
-    { path: join(specsDir, 'engineering', 'testing-rules.md'), content: templates.testingRules(scan) },
-    // Architecture
-    { path: join(specsDir, 'architecture', 'system-overview.md'), content: templates.systemOverview() },
-    { path: join(specsDir, 'architecture', 'components.md'),       content: templates.components() },
-    // Domain
-    { path: join(specsDir, 'domain', 'business-rules.md'),   content: templates.businessRules() },
-    { path: join(specsDir, 'domain', 'workflows.md'),         content: templates.workflows() },
-    { path: join(specsDir, 'domain', 'decision-tables.md'),   content: templates.decisionTables() },
-    { path: join(specsDir, 'domain', 'scenarios.yaml'),       content: templates.scenariosYaml() },
-    // ADR
-    { path: join(specsDir, 'adr', '0001-initial-project-assumptions.md'), content: templates.initialAdr() },
-    // Cases
-    { path: join(specsDir, 'cases', 'README.md'), content: templates.casesReadme() },
-    // AI
-    { path: join(specsDir, 'ai', 'instructions.md'), content: templates.aiInstructions() },
-    { path: join(specsDir, 'ai', 'forbidden.md'),    content: templates.aiForbidden() },
-    { path: join(specsDir, 'ai', 'checklist.md'),    content: templates.aiChecklist() },
-    // .specmanignore
-    { path: join(root, '.specmanignore'), content: templates.specmanIgnore() },
+  // Define all files to create in a tree structure
+  const specNodes: TreeSelectNode<{ path: string; content: string }>[] = [
+    { label: '00-project-overview.md', value: { path: join(specsDir, '00-project-overview.md'), content: templates.projectOverview(scan) }, checked: true },
+    { label: '01-detected-stack.md', value: { path: join(specsDir, '01-detected-stack.md'), content: templates.detectedStack(scan) }, checked: true },
+    { label: '02-assumptions.md', value: { path: join(specsDir, '02-assumptions.md'), content: templates.assumptions(scan) }, checked: true },
+    { label: '03-open-questions.md', value: { path: join(specsDir, '03-open-questions.md'), content: templates.openQuestions() }, checked: true },
+    {
+      label: 'product/', checked: true, children: [
+        { label: 'requirements.md', value: { path: join(specsDir, 'product', 'requirements.md'), content: templates.productRequirements() }, checked: true },
+      ]
+    },
+    {
+      label: 'engineering/', checked: true, children: [
+        { label: 'coding-rules.md', value: { path: join(specsDir, 'engineering', 'coding-rules.md'), content: templates.codingRules(scan) }, checked: true },
+        { label: 'testing-rules.md', value: { path: join(specsDir, 'engineering', 'testing-rules.md'), content: templates.testingRules(scan) }, checked: true },
+      ]
+    },
+    {
+      label: 'architecture/', checked: true, children: [
+        { label: 'system-overview.md', value: { path: join(specsDir, 'architecture', 'system-overview.md'), content: templates.systemOverview() }, checked: true },
+        { label: 'components.md', value: { path: join(specsDir, 'architecture', 'components.md'), content: templates.components() }, checked: true },
+      ]
+    },
+    {
+      label: 'domain/', checked: true, children: [
+        { label: 'business-rules.md', value: { path: join(specsDir, 'domain', 'business-rules.md'), content: templates.businessRules() }, checked: true },
+        { label: 'workflows.md', value: { path: join(specsDir, 'domain', 'workflows.md'), content: templates.workflows() }, checked: true },
+        { label: 'decision-tables.md', value: { path: join(specsDir, 'domain', 'decision-tables.md'), content: templates.decisionTables() }, checked: true },
+        { label: 'scenarios.yaml', value: { path: join(specsDir, 'domain', 'scenarios.yaml'), content: templates.scenariosYaml() }, checked: true },
+      ]
+    },
+    {
+      label: 'adr/', checked: true, children: [
+        { label: '0001-initial-project-assumptions.md', value: { path: join(specsDir, 'adr', '0001-initial-project-assumptions.md'), content: templates.initialAdr() }, checked: true },
+      ]
+    },
+    {
+      label: 'cases/', checked: true, children: [
+        { label: 'README.md', value: { path: join(specsDir, 'cases', 'README.md'), content: templates.casesReadme() }, checked: true },
+      ]
+    },
+    {
+      label: 'ai/', checked: true, children: [
+        { label: 'instructions.md', value: { path: join(specsDir, 'ai', 'instructions.md'), content: templates.aiInstructions() }, checked: true },
+        { label: 'forbidden.md', value: { path: join(specsDir, 'ai', 'forbidden.md'), content: templates.aiForbidden() }, checked: true },
+        { label: 'checklist.md', value: { path: join(specsDir, 'ai', 'checklist.md'), content: templates.aiChecklist() }, checked: true },
+      ]
+    }
   ];
 
-  // Create all files
+  let filesToCreate = await multiSelectTree(
+    'Specs Structure',
+    `${config.specsDir}/`,
+    specNodes
+  );
+
+  if (filesToCreate.length === 0) {
+    console.log(`\n  ${icons.info}  No files selected. Initialization cancelled.`);
+    process.exit(0);
+  }
+
+  // Always create .specmanignore implicitly
+  filesToCreate.push({ path: join(root, '.specmanignore'), content: templates.specmanIgnore() });
+
+  // Create selected files
   let created = 0;
   let skipped  = 0;
-  for (const file of files) {
+  for (const file of filesToCreate) {
     const written = await safeWriteFile(file.path, file.content);
     if (written) created++; else skipped++;
   }
@@ -141,43 +173,12 @@ export async function initCommand(root: string, options: InitOptions = {}): Prom
   await saveConfig(root, config);
   await saveStatus(root, { ...status, initialized: true });
 
+  console.log();
+  const skippedMsg = skipped > 0 ? c.dim(` (${skipped} skipped)`) : '';
+  console.log(`  ${icons.success}  ${c.greenB(`Initialized ${created} spec file(s)${skippedMsg}`)}`);
+
   // Generate AI instruction files immediately
   await syncCommand(root, 'all');
-
-  // ── Specs Structure ──
-  printSection('Specs Structure Created');
-  printTree(`${config.specsDir}/`, [
-    '├── 00-project-overview.md',
-    '├── 01-detected-stack.md',
-    '├── 02-assumptions.md',
-    '├── 03-open-questions.md',
-    '├── product/',
-    '│   └── requirements.md',
-    '├── engineering/',
-    '│   ├── coding-rules.md',
-    '│   └── testing-rules.md',
-    '├── architecture/',
-    '│   ├── system-overview.md',
-    '│   └── components.md',
-    '├── domain/',
-    '│   ├── business-rules.md',
-    '│   ├── workflows.md',
-    '│   ├── decision-tables.md',
-    '│   └── scenarios.yaml',
-    '├── adr/',
-    '│   └── 0001-initial-project-assumptions.md',
-    '├── cases/',
-    '│   └── README.md',
-    '└── ai/',
-    '    ├── instructions.md',
-    '    ├── forbidden.md',
-    '    └── checklist.md',
-  ]);
-  console.log();
-  printSummaryBox([
-    { icon: icons.success, label: 'Files created', value: created, color: c.greenB },
-    { icon: icons.info,    label: 'Files skipped', value: skipped, color: c.dim  },
-  ]);
 
   if (selectedAiTool === 'prompt') {
     console.log(specsPrompt());
