@@ -147,3 +147,41 @@ export async function readIgnorePatterns(root: string): Promise<string[]> {
     .map(line => line.trim())
     .filter(line => line && !line.startsWith('#'));
 }
+
+/**
+ * Discovers source files recursively in standard directories.
+ */
+export async function discoverSourceFiles(root: string): Promise<string[]> {
+  const sourceDirs = ['src', 'app', 'lib', 'internal', 'cmd'];
+  const sourceExts = new Set([
+    '.ts', '.tsx', '.js', '.jsx', '.go', '.py', '.rs',
+    '.java', '.kt', '.php', '.rb', '.cs', '.swift',
+  ]);
+  const files: string[] = [];
+  for (const dir of sourceDirs) {
+    const dirFiles = await listFilesRecursive(join(root, dir));
+    files.push(
+      ...dirFiles.filter((f) => {
+        const dot = f.lastIndexOf('.');
+        return dot >= 0 && sourceExts.has(f.slice(dot));
+      }),
+    );
+  }
+  return files;
+}
+
+/**
+ * Finds the newest modification time among a list of files.
+ */
+export async function newestMtime(files: string[]): Promise<number | null> {
+  let newest: number | null = null;
+  for (const file of files) {
+    try {
+      const s = await stat(file);
+      if (newest === null || s.mtimeMs > newest) newest = s.mtimeMs;
+    } catch {
+      // skip unreadable files
+    }
+  }
+  return newest;
+}
