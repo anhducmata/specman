@@ -1,126 +1,77 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { initCommand } from './commands/init.js';
-import { reviewCommand } from './commands/review.js';
-import { approveCommand } from './commands/approve.js';
 import { syncCommand } from './commands/sync.js';
-import { promptCommand } from './commands/prompt.js';
-import { summaryCommand } from './commands/summary.js';
-import { addCommand } from './commands/add.js';
-import { checkCommand } from './commands/check.js';
-import { searchCommand } from './commands/search.js';
-import { captureCommand } from './commands/capture.js';
-import { snapshotCommand } from './commands/snapshot.js';
 import { validateCommand } from './commands/validate.js';
+import { removeCommand } from './commands/remove.js';
 
 const program = new Command();
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const packageVersion = readPackageVersion(currentDir);
 
 program
   .name('specman')
   .description('AI-first spec management CLI for software teams')
-  .version('0.1.1');
+  .version(packageVersion);
 
 // ─── specman init ───
 program
   .command('init')
-  .description('Scan the current project and create specs structure')
-  .action(async () => {
-    await initCommand(process.cwd());
+  .option('--with <assistant>', 'Ask a local AI CLI to fill specs: claude, codex, cursor')
+  .option('--prompt', 'Print a prompt for filling specs instead of asking interactively')
+  .option('--skip-ai', 'Create files only; skip the interactive AI prompt')
+  .description('Create specs structure and AI tool rules')
+  .action(async (options: { with?: string; prompt?: boolean; skipAi?: boolean }) => {
+    await initCommand(process.cwd(), {
+      assistant: options.with,
+      prompt: !!options.prompt,
+      noPrompt: !!options.skipAi,
+    });
   });
 
-// ─── specman review ───
-program
-  .command('review')
-  .description('Print generated assumptions, detected stack, and open questions')
-  .action(async () => {
-    await reviewCommand(process.cwd());
-  });
-
-// ─── specman approve ───
-program
-  .command('approve')
-  .description('Mark generated specs as approved source of truth')
-  .action(async () => {
-    await approveCommand(process.cwd());
-  });
-
-// ─── specman sync <target> ───
+// ─── specman sync ───
 program
   .command('sync')
-  .argument('<target>', 'Sync target (use "all")')
-  .description('Generate AI tool instruction files')
-  .action(async (target: string) => {
-    await syncCommand(process.cwd(), target);
-  });
-
-// ─── specman prompt ───
-program
-  .command('prompt')
-  .description('Print a reusable prompt for AI coding tools')
-  .action(async () => {
-    await promptCommand(process.cwd());
-  });
-
-// ─── specman summary ───
-program
-  .command('summary')
-  .description('Generate a short project context summary for AI')
-  .action(async () => {
-    await summaryCommand(process.cwd());
-  });
-
-// ─── specman add <type> <name> ───
-program
-  .command('add')
-  .argument('<type>', 'Type: spec, domain, adr, case, rule')
-  .argument('<name>', 'Name or title for the new file')
-  .option('-f, --force', 'Overwrite existing files', false)
-  .description('Add a new spec file')
-  .action(async (type: string, name: string, options: { force: boolean }) => {
-    await addCommand(process.cwd(), type, name, options.force);
-  });
-
-// ─── specman check ───
-program
-  .command('check')
-  .description('Validate spec structure and detect issues')
-  .action(async () => {
-    await checkCommand(process.cwd());
-  });
-
-// ─── specman search <query> ───
-program
-  .command('search')
-  .argument('<query>', 'Search query')
-  .description('Search specs, ADRs, domain rules, and solved cases')
-  .action(async (query: string) => {
-    await searchCommand(process.cwd(), query);
-  });
-
-// ─── specman capture ───
-program
-  .command('capture')
-  .description('Interactively capture a solved problem into a case')
-  .action(async () => {
-    await captureCommand(process.cwd());
-  });
-
-// ─── specman snapshot ───
-program
-  .command('snapshot')
-  .description('Create/update logic-lock fingerprints')
-  .action(async () => {
-    await snapshotCommand(process.cwd());
+  .option('--check', 'Show sync status without writing files')
+  .option('--yes', 'Apply changes without confirmation', false)
+  .description('Update AI tool rules from the current specs')
+  .action(async (options: { check?: boolean; yes?: boolean }) => {
+    await syncCommand(process.cwd(), 'all', { check: !!options.check, yes: !!options.yes });
   });
 
 // ─── specman validate ───
 program
   .command('validate')
+  .option('--review', 'Review whether specs still match the current code')
   .option('--logic', 'Compare current hashes with logic-lock snapshot')
-  .description('Validate project against specs and logic-lock')
-  .action(async (options: { logic?: boolean }) => {
-    await validateCommand(process.cwd(), !!options.logic);
+  .option('--update', 'Update the logic-lock snapshot when used with --logic')
+  .description('Validate specs, AI rules, solved cases, or code/spec freshness')
+  .action(async (options: { review?: boolean; logic?: boolean; update?: boolean }) => {
+    await validateCommand(process.cwd(), { review: !!options.review, logic: !!options.logic, update: !!options.update });
+  });
+
+// ─── specman remove ───
+program
+  .command('remove')
+  .option('--yes', 'Actually remove files after previewing them', false)
+  .description('Safely remove specman-managed files from this repository')
+  .action(async (options: { yes?: boolean }) => {
+    await removeCommand(process.cwd(), options);
   });
 
 program.parse();
+
+function readPackageVersion(cliDir: string): string {
+  try {
+    const packageJsonPath = join(cliDir, '..', 'package.json');
+    const content = readFileSync(packageJsonPath, 'utf-8');
+    const parsed = JSON.parse(content) as { version?: string };
+    return parsed.version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}

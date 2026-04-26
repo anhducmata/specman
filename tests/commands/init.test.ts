@@ -86,4 +86,47 @@ describe('init command', () => {
     const content = await readFile(overviewPath, 'utf-8');
     expect(content).toBe('# Custom Content');
   });
+
+  it('should preserve existing config and approval status on re-init', async () => {
+    await initCommand(tempDir);
+
+    await writeFile(
+      join(tempDir, '.specman', 'config.json'),
+      JSON.stringify({
+        version: 1,
+        specsDir: 'knowledge',
+        caseMaxBytes: 12000,
+        approvedRequired: false,
+        aiTools: {
+          claude: true,
+          codex: false,
+          agents: true,
+          cursor: true,
+          copilot: true,
+        },
+        logicLock: {
+          enabled: true,
+          paths: ['src/**/*.ts'],
+        },
+      }),
+    );
+    await writeFile(
+      join(tempDir, '.specman', 'status.json'),
+      JSON.stringify({
+        initialized: true,
+        approved: true,
+        approvedAt: '2026-01-01T00:00:00.000Z',
+        approvedBy: 'tester',
+      }),
+    );
+
+    await initCommand(tempDir);
+
+    const status = JSON.parse(await readFile(join(tempDir, '.specman', 'status.json'), 'utf-8'));
+    expect(status.approved).toBe(true);
+    expect(status.approvedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(status.approvedBy).toBe('tester');
+
+    expect(await fileExists(join(tempDir, 'knowledge', '00-project-overview.md'))).toBe(true);
+  });
 });

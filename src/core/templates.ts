@@ -327,11 +327,8 @@ This directory contains previously solved problems, bugs, incidents, and their s
 - Link to related specs when applicable
 
 ## Adding a Case
-\`\`\`bash
-specman add case "descriptive title"
-# or
-specman capture
-\`\`\`
+
+Create a new Markdown file in this directory using the case structure below. AI tools that read \`SPECMAN.md\` may create or update these files after solving meaningful project-specific issues.
 `;
 }
 
@@ -340,6 +337,11 @@ export function caseTemplate(title: string): string {
 
 ## Status
 Draft
+
+## Usage
+- Times Used: 0
+- Successful Uses: 0
+- Score: 0
 
 ## Problem
 <!-- Short description of the problem -->
@@ -352,6 +354,12 @@ Draft
 
 ## Solution
 <!-- What fixed it -->
+
+## Files Changed
+<!-- - path: short reason -->
+
+## Validation
+<!-- Commands/checks run and results -->
 
 ## Before
 <!-- Optional safe snippet or summary -->
@@ -386,6 +394,11 @@ export function caseFromData(data: CaseData): string {
 ## Status
 ${data.status}
 
+## Usage
+- Times Used: 0
+- Successful Uses: 0
+- Score: 0
+
 ## Problem
 ${data.problem}
 
@@ -397,6 +410,12 @@ ${data.rootCause}
 
 ## Solution
 ${data.solution}
+
+## Files Changed
+<!-- Not provided -->
+
+## Validation
+<!-- Not provided -->
 
 ## Before
 ${data.before || '<!-- Not provided -->'}

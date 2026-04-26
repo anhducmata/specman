@@ -1,12 +1,16 @@
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.js';
-import { listFilesRecursive, readTextFile } from '../core/files.js';
-import { icons, withLoader } from '../core/ui.js';
+import { listFilesRecursive, mapWithConcurrency, readTextFile } from '../core/files.js';
+import { colorize, icons, supportsColorOutput, withLoader } from '../core/ui.js';
+
+interface SearchCommandOptions {
+  color?: boolean;
+}
 
 /**
  * Search specs, ADRs, domain rules, and solved cases.
  */
-export async function searchCommand(root: string, query: string): Promise<void> {
+export async function searchCommand(root: string, query: string, options: SearchCommandOptions = {}): Promise<void> {
   if (!query || query.trim().length === 0) {
     console.log(`${icons.error} Please provide a search query. Usage: specman search <query>`);
     process.exit(1);
@@ -15,6 +19,8 @@ export async function searchCommand(root: string, query: string): Promise<void> 
   const config = await loadConfig(root);
   const specsDir = join(root, config.specsDir);
   const queryLower = query.toLowerCase();
+
+  const shouldColor = (options.color ?? true) && supportsColorOutput();
 
   const results = await withLoader(`Searching for "${query}"`, async () => {
     const allFiles = await listFilesRecursive(specsDir);
@@ -25,8 +31,13 @@ export async function searchCommand(root: string, query: string): Promise<void> 
     const fileResults: { file: string; matches: { line: number; text: string }[] }[] = [];
     let totalMatches = 0;
 
-    for (const file of textFiles) {
-      const content = await readTextFile(file);
+    const contents = await mapWithConcurrency(textFiles, 8, async (file) => ({
+      file,
+      content: await readTextFile(file),
+    }));
+
+    for (const entry of contents) {
+      const { file, content } = entry;
       if (!content) continue;
 
       const lines = content.split('\n');
@@ -55,7 +66,7 @@ export async function searchCommand(root: string, query: string): Promise<void> 
 
       const showMatches = res.matches.slice(0, 5);
       for (const m of showMatches) {
-        const highlighted = highlightMatch(m.text, query);
+        const highlighted = highlightMatch(m.text, query, shouldColor);
         console.log(`   L${m.line}: ${highlighted}`);
       }
 
@@ -71,9 +82,9 @@ export async function searchCommand(root: string, query: string): Promise<void> 
 /**
  * Highlight matching text in a line (case-insensitive).
  */
-function highlightMatch(text: string, query: string): string {
+function highlightMatch(text: string, query: string, enableColor: boolean): string {
   const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
-  return text.replace(regex, '\x1b[33m$1\x1b[0m'); // Yellow highlight
+  return text.replace(regex, (matched) => colorize(matched, '33', enableColor)); // Yellow highlight
 }
 
 function escapeRegex(str: string): string {

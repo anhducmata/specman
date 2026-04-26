@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { loadConfig, loadStatus } from '../core/config.js';
-import { fileExists, listFilesRecursive, readTextFile, getFileSize } from '../core/files.js';
+import { fileExists, listFilesRecursive, readTextFile, getFileSize, mapWithConcurrency } from '../core/files.js';
 import { checkForSecrets } from '../core/redactor.js';
 import { icons, withLoader } from '../core/ui.js';
 import type { CheckResult } from '../types.js';
@@ -53,7 +53,23 @@ export async function checkCommand(root: string): Promise<void> {
 
     // ─── Check approval status ───
     if (config.approvedRequired && !status.approved) {
-      results.push({ severity: 'ERROR', message: 'Specs are not approved but approvedRequired is true. Run `specman approve`.' });
+      results.push({ severity: 'ERROR', message: 'Specs are not approved but approvedRequired is true.' });
+    }
+
+    // ─── Check generated AI instruction files ───
+    const aiInstructionFiles = [
+      'SPECMAN.md',
+      config.aiTools.claude ? 'CLAUDE.md' : null,
+      config.aiTools.codex ? 'CODEX.md' : null,
+      config.aiTools.agents ? 'AGENTS.md' : null,
+      config.aiTools.cursor ? '.cursor/rules/specman.mdc' : null,
+      config.aiTools.copilot ? '.github/copilot-instructions.md' : null,
+    ].filter((file): file is string => file !== null);
+
+    for (const file of aiInstructionFiles) {
+      if (!(await fileExists(join(root, file)))) {
+        results.push({ severity: 'WARN', message: `Missing generated AI instruction file: ${file}. Run \`specman sync\`.` });
+      }
     }
 
     // ─── Check for draft assumptions ───
@@ -69,14 +85,16 @@ export async function checkCommand(root: string): Promise<void> {
       'engineering/coding-rules.md',
     ];
 
-    for (const file of recommendedFiles) {
-      const content = await readTextFile(join(specsDir, file));
-      if (content) {
-        // Check if file only contains template placeholders
-        const stripped = content.replace(/<!--[\s\S]*?-->/g, '').replace(/^#+\s.*$/gm, '').replace(/^>.*$/gm, '').trim();
-        if (stripped.length < 20) {
-          results.push({ severity: 'WARN', message: `File appears to be empty/template-only: ${config.specsDir}/${file}`, file: `${config.specsDir}/${file}` });
-        }
+    const recommendedContents = await mapWithConcurrency(recommendedFiles, 8, async (file) => ({
+      file,
+      content: await readTextFile(join(specsDir, file)),
+    }));
+    for (const entry of recommendedContents) {
+      if (!entry.content) continue;
+      // Check if file only contains template placeholders
+      const stripped = entry.content.replace(/<!--[\s\S]*?-->/g, '').replace(/^#+\s.*$/gm, '').replace(/^>.*$/gm, '').trim();
+      if (stripped.length < 20) {
+        results.push({ severity: 'WARN', message: `File appears to be empty/template-only: ${config.specsDir}/${entry.file}`, file: `${config.specsDir}/${entry.file}` });
       }
     }
 
@@ -84,23 +102,30 @@ export async function checkCommand(root: string): Promise<void> {
     const allFiles = await listFilesRecursive(specsDir);
     const textFiles = allFiles.filter(f => f.endsWith('.md') || f.endsWith('.yaml') || f.endsWith('.yml'));
 
-    for (const file of textFiles) {
-      const content = await readTextFile(file);
+    const scannedTextFiles = await mapWithConcurrency(textFiles, 8, async (file) => ({
+      file,
+      content: await readTextFile(file),
+    }));
+
+    for (const entry of scannedTextFiles) {
+      const { file, content } = entry;
       if (!content) continue;
 
       const secrets = checkForSecrets(content);
-      if (secrets.length > 0) {
-        for (const secret of secrets) {
-          // Skip email pattern in template files (reduce false positives)
-          if (secret.pattern === 'Email Address' && content.includes('⚠️ DRAFT')) continue;
+      if (secrets.length === 0) continue;
 
-          results.push({
-            severity: 'ERROR',
-            message: `Potential ${secret.pattern} found at line ${secret.line}: ${secret.match}`,
-            file: file.replace(root + '/', ''),
-            line: secret.line,
-          });
-        }
+      for (const secret of secrets) {
+        // Skip email pattern in template files (reduce false positives)
+        if (secret.pattern === 'Email Address' && content.includes('⚠️ DRAFT')) continue;
+
+        const severity = secret.pattern === 'Email Address' ? 'WARN' : 'ERROR';
+
+        results.push({
+          severity,
+          message: `Potential ${secret.pattern} found at line ${secret.line}: ${secret.match}`,
+          file: file.replace(root + '/', ''),
+          line: secret.line,
+        });
       }
     }
 
@@ -108,14 +133,49 @@ export async function checkCommand(root: string): Promise<void> {
     const casesDir = join(specsDir, 'cases');
     const caseFiles = (await listFilesRecursive(casesDir)).filter(f => f.endsWith('.md') && !f.endsWith('README.md'));
 
-    for (const file of caseFiles) {
-      const size = await getFileSize(file);
-      if (size > config.caseMaxBytes) {
+    const caseSizes = await mapWithConcurrency(caseFiles, 8, async (file) => ({
+      file,
+      size: await getFileSize(file),
+    }));
+    for (const entry of caseSizes) {
+      if (entry.size > config.caseMaxBytes) {
         results.push({
           severity: 'WARN',
-          message: `Case file is too large (${size} bytes > ${config.caseMaxBytes} limit): ${file.replace(root + '/', '')}`,
-          file: file.replace(root + '/', ''),
+          message: `Case file is too large (${entry.size} bytes > ${config.caseMaxBytes} limit): ${entry.file.replace(root + '/', '')}`,
+          file: entry.file.replace(root + '/', ''),
         });
+      }
+    }
+
+    const requiredCaseSections = [
+      '## Status',
+      '## Usage',
+      '## Problem',
+      '## Context',
+      '## Root Cause',
+      '## Solution',
+      '## Files Changed',
+      '## Validation',
+      '## When To Reuse',
+      '## When NOT To Use',
+      '## Related Specs',
+      '## Tags',
+    ];
+
+    const caseContents = await mapWithConcurrency(caseFiles, 8, async (file) => ({
+      file,
+      content: await readTextFile(file),
+    }));
+    for (const entry of caseContents) {
+      if (!entry.content) continue;
+      for (const section of requiredCaseSections) {
+        if (!entry.content.includes(section)) {
+          results.push({
+            severity: 'WARN',
+            message: `Case file is missing required section ${section}: ${entry.file.replace(root + '/', '')}`,
+            file: entry.file.replace(root + '/', ''),
+          });
+        }
       }
     }
 

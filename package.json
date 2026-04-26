@@ -1,6 +1,6 @@
 {
   "name": "specman",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AI-first spec management CLI for software teams",
   "type": "module",
   "main": "./dist/cli.js",
@@ -41,6 +41,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/anhducmata/specman.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
     "commander": "^13.1.0",

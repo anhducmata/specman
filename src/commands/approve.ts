@@ -40,5 +40,5 @@ export async function approveCommand(root: string): Promise<void> {
   console.log(`   Approved by: ${username}`);
   console.log();
   console.log('Next steps:');
-  console.log('   Run `specman sync all` to generate AI instruction files.');
+  console.log('   Run `specman sync` to update AI instruction files.');
 }

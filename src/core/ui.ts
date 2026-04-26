@@ -5,10 +5,29 @@ import { stdout } from 'node:process';
  */
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export function isInteractiveTerminal(): boolean {
+  return Boolean(stdout.isTTY) && process.env.CI !== 'true';
+}
+
+export function supportsColorOutput(): boolean {
+  if (!isInteractiveTerminal()) return false;
+  if (process.env.NO_COLOR !== undefined) return false;
+  return true;
+}
+
+export function colorize(text: string, ansiCode: string, enabled = supportsColorOutput()): string {
+  if (!enabled) return text;
+  return `\x1b[${ansiCode}m${text}\x1b[0m`;
+}
+
 /**
  * A simple "Claude-style" dot-animation for long tasks.
  */
 export async function withLoader<T>(label: string, task: () => Promise<T>): Promise<T> {
+  if (!isInteractiveTerminal()) {
+    return task();
+  }
+
   const frames = ['.  ', '.- ', '.-+', '.-+*', '.-+', '.- ', '.  '];
   let i = 0;
   

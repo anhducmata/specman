@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { hashFile, hashString, compareSnapshots } from '../../src/core/hash.js';
+import { createSnapshot, discoverLogicLockFiles, hashFile, hashString, compareSnapshots } from '../../src/core/hash.js';
 import type { LogicLockSnapshot } from '../../src/types.js';
 
 describe('hash', () => {
@@ -53,6 +53,74 @@ describe('hash', () => {
 
     it('should return different hash for different strings', () => {
       expect(hashString('a')).not.toBe(hashString('b'));
+    });
+  });
+
+  describe('discoverLogicLockFiles', () => {
+    it('should discover configured logic-lock files', async () => {
+      await mkdir(join(tempDir, '.specman'), { recursive: true });
+      await mkdir(join(tempDir, 'src'), { recursive: true });
+      await writeFile(
+        join(tempDir, '.specman', 'config.json'),
+        JSON.stringify({
+          version: 1,
+          specsDir: 'specs',
+          caseMaxBytes: 12000,
+          approvedRequired: false,
+          aiTools: {
+            claude: true,
+            codex: true,
+            agents: true,
+            cursor: true,
+            copilot: true,
+          },
+          logicLock: {
+            enabled: true,
+            paths: ['src/**/*.ts'],
+          },
+        }),
+      );
+      await writeFile(join(tempDir, 'src', 'policy.ts'), 'export const policy = true;\n');
+
+      const files = await discoverLogicLockFiles(tempDir);
+
+      expect(files).toEqual(['src/policy.ts']);
+    });
+  });
+
+  describe('createSnapshot', () => {
+    it('should create snapshot items with stable path and hash data', async () => {
+      await mkdir(join(tempDir, '.specman'), { recursive: true });
+      await mkdir(join(tempDir, 'src'), { recursive: true });
+      await writeFile(
+        join(tempDir, '.specman', 'config.json'),
+        JSON.stringify({
+          version: 1,
+          specsDir: 'specs',
+          caseMaxBytes: 12000,
+          approvedRequired: false,
+          aiTools: {
+            claude: true,
+            codex: true,
+            agents: true,
+            cursor: true,
+            copilot: true,
+          },
+          logicLock: {
+            enabled: true,
+            paths: ['src/**/*.ts'],
+          },
+        }),
+      );
+      await writeFile(join(tempDir, 'src', 'rules.ts'), 'export const rules = true;\n');
+
+      const snapshot = await createSnapshot(tempDir);
+
+      expect(snapshot.version).toBe(1);
+      expect(snapshot.items).toHaveLength(1);
+      expect(snapshot.items[0].id).toBe('rules');
+      expect(snapshot.items[0].path).toBe('src/rules.ts');
+      expect(snapshot.items[0].hash).toMatch(/^[a-f0-9]{64}$/);
     });
   });
 

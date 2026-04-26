@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { join, relative, basename } from 'node:path';
+import { join, basename } from 'node:path';
 import { glob } from 'glob';
 import type { LogicLockSnapshot, LogicLockItem } from '../types.js';
-import { fileExists, readTextFile } from './files.js';
+import { mapWithConcurrency, readTextFile } from './files.js';
 import { loadConfig } from './config.js';
 
 /**
@@ -50,24 +50,23 @@ export async function discoverLogicLockFiles(root: string): Promise<string[]> {
  */
 export async function createSnapshot(root: string): Promise<LogicLockSnapshot> {
   const files = await discoverLogicLockFiles(root);
-  const items: LogicLockItem[] = [];
-
-  for (const file of files) {
+  const items = (await mapWithConcurrency(files, 8, async (file): Promise<LogicLockItem | null> => {
     const fullPath = join(root, file);
     try {
       const hash = await hashFile(fullPath);
       // Generate an ID from the filename (without extension)
       const id = basename(file).replace(/\.[^.]+$/, '');
-      items.push({
+      return {
         id,
         type: 'file',
         path: file,
         hash,
-      });
+      };
     } catch {
       // File can't be read, skip
+      return null;
     }
-  }
+  })).filter((item): item is LogicLockItem => item !== null);
 
   return {
     version: 1,

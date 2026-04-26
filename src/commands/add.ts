@@ -1,7 +1,7 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { readdir } from 'node:fs/promises';
 import { loadConfig } from '../core/config.js';
-import { safeWriteFile, toKebabCase } from '../core/files.js';
+import { listFilesRecursive, readTextFile, safeWriteFile, toKebabCase } from '../core/files.js';
 import * as templates from '../core/templates.js';
 import { icons } from '../core/ui.js';
 
@@ -31,6 +31,10 @@ export async function addCommand(
   const config = await loadConfig(root);
   const specsDir = join(root, config.specsDir);
   const kebabName = toKebabCase(name);
+  if (!kebabName) {
+    console.log(`${icons.error} Name must include at least one letter or number.`);
+    process.exit(1);
+  }
 
   let filePath: string;
   let content: string;
@@ -65,6 +69,12 @@ export async function addCommand(
     }
   }
 
+  if (!force && await hasDuplicateTitle(filePath, name)) {
+    console.log(`${icons.warn} A file with the same title already exists near: ${filePath}`);
+    console.log('   Use --force only if you intentionally want another file for this title.');
+    return;
+  }
+
   const written = await safeWriteFile(filePath, content, force);
 
   if (written) {
@@ -73,6 +83,31 @@ export async function addCommand(
     console.log(`${icons.warn} File already exists: ${filePath}`);
     console.log('   Use --force to overwrite.');
   }
+}
+
+async function hasDuplicateTitle(filePath: string, title: string): Promise<boolean> {
+  const dir = dirname(filePath);
+  const normalizedTitle = normalizeTitle(title);
+  const files = (await listFilesRecursive(dir)).filter(file => file.endsWith('.md'));
+
+  for (const file of files) {
+    const content = await readTextFile(file);
+    if (!content) continue;
+
+    const heading = content.split('\n').find(line => line.startsWith('# '));
+    if (!heading) continue;
+
+    const existingTitle = heading.replace(/^#\s+(Case:\s+|Domain Rule:\s+|ADR\s+\d+:\s+)?/i, '').trim();
+    if (normalizeTitle(existingTitle) === normalizedTitle) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function normalizeTitle(value: string): string {
+  return toKebabCase(value);
 }
 
 /**

@@ -93,7 +93,7 @@ export const DEFAULT_CONFIG: SpecmanConfig = {
   version: 1,
   specsDir: 'specs',
   caseMaxBytes: 12000,
-  approvedRequired: true,
+  approvedRequired: false,
   aiTools: {
     claude: true,
     codex: true,

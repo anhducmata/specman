@@ -110,6 +110,33 @@ export async function listFilesRecursive(dirPath: string): Promise<string[]> {
 }
 
 /**
+ * Map items with bounded concurrency.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const normalizedLimit = Math.max(1, Math.floor(limit));
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex++;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(normalizedLimit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+/**
  * Read .specmanignore patterns (one per line, ignoring comments and blanks).
  */
 export async function readIgnorePatterns(root: string): Promise<string[]> {

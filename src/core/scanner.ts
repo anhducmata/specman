@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import type { ScanResult, DetectedTech } from '../types.js';
-import { fileExists } from './files.js';
+import { fileExists, mapWithConcurrency } from './files.js';
 
 // Files to scan for stack detection
 const SCAN_FILES = [
@@ -43,10 +43,12 @@ export async function scanProject(root: string): Promise<ScanResult> {
   const detectedStack: DetectedTech[] = [];
 
   // Check for known files
-  for (const file of SCAN_FILES) {
-    if (await fileExists(join(root, file))) {
-      detectedFiles.push(file);
-    }
+  const fileChecks = await mapWithConcurrency(SCAN_FILES, 8, async (file) => ({
+    file,
+    exists: await fileExists(join(root, file)),
+  }));
+  for (const check of fileChecks) {
+    if (check.exists) detectedFiles.push(check.file);
   }
 
   // Check for known directories
@@ -59,14 +61,20 @@ export async function scanProject(root: string): Promise<ScanResult> {
     hasMigrations: false,
   };
 
-  for (const dir of SCAN_DIRS) {
-    if (await fileExists(join(root, dir))) {
-      detectedFiles.push(dir + '/');
-      if (dir === 'migrations') dirChecks.hasMigrations = true;
-      if (dir === 'tests' || dir === 'test') dirChecks.hasTests = true;
-      if (dir === 'src' || dir === 'app' || dir === 'lib') dirChecks.hasSrc = true;
-      if (dir === '.github/workflows') dirChecks.hasCi = true;
-    }
+  const dirExistsChecks = await mapWithConcurrency(SCAN_DIRS, 8, async (dir) => ({
+    dir,
+    exists: await fileExists(join(root, dir)),
+  }));
+
+  for (const check of dirExistsChecks) {
+    if (!check.exists) continue;
+
+    const dir = check.dir;
+    detectedFiles.push(dir + '/');
+    if (dir === 'migrations') dirChecks.hasMigrations = true;
+    if (dir === 'tests' || dir === 'test') dirChecks.hasTests = true;
+    if (dir === 'src' || dir === 'app' || dir === 'lib') dirChecks.hasSrc = true;
+    if (dir === '.github/workflows') dirChecks.hasCi = true;
   }
 
   if (detectedFiles.includes('Dockerfile') || detectedFiles.includes('docker-compose.yml') || detectedFiles.includes('docker-compose.yaml')) {
