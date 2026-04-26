@@ -116,8 +116,9 @@ function buildCommand(assistant: AssistantCli, prompt: string): { command: strin
       return {
         command: 'codex',
         args: [
-          'exec', prompt,
+          'exec',
           '-c', 'sandbox_permissions=["disk-full-read-access","disk-write-access"]',
+          prompt,
         ],
       };
     default:
@@ -144,7 +145,7 @@ function buildNonInteractiveCommand(
         : '["disk-full-read-access","network-outbound-disabled"]';
       return {
         command: 'codex',
-        args: ['exec', prompt, '-c', `sandbox_permissions=${perms}`],
+        args: ['exec', '-c', `sandbox_permissions=${perms}`, prompt],
       };
     }
     default:
@@ -206,7 +207,7 @@ function readPrompt(filename: string, specsDir?: string): string {
  * Prompt to fill specs from scratch (used by specman init / specman init --with <tool>).
  */
 export function specsPrompt(): string {
-  return readPrompt('specs.md');
+  return readPrompt('commands/specs.md');
 }
 
 /**
@@ -214,7 +215,7 @@ export function specsPrompt(): string {
  * AI reads the current code and updates specs to reflect reality.
  */
 export function codeToSpecsPrompt(specsDir: string): string {
-  return readPrompt('code-to-specs.md', specsDir);
+  return readPrompt('commands/code-to-specs.md', specsDir);
 }
 
 /**
@@ -222,7 +223,7 @@ export function codeToSpecsPrompt(specsDir: string): string {
  * AI reads the specs and implements them into the codebase.
  */
 export function specsToCodePrompt(specsDir: string): string {
-  return readPrompt('specs-to-code.md', specsDir);
+  return readPrompt('commands/specs-to-code.md', specsDir);
 }
 
 /**
@@ -230,7 +231,33 @@ export function specsToCodePrompt(specsDir: string): string {
  * AI reads both specs and code, reports gaps — does NOT modify anything.
  */
 export function gapPrompt(specsDir: string): string {
-  return readPrompt('gap.md', specsDir);
+  return readPrompt('commands/gap.md', specsDir);
+}
+
+/**
+ * Prompt for specman run (Planning Phase):
+ * Instructs the AI to break down a goal into a markdown checklist.
+ */
+export function autoPlanPrompt(specsDir: string, goal: string): string {
+  let content = readPrompt('commands/auto-plan.md', specsDir);
+  return content.replace(/\{\{goal\}\}/g, goal);
+}
+
+/**
+ * Prompt for specman run (Execution Phase):
+ * Instructs the AI to execute a single step from the plan.
+ */
+export function autoStepPrompt(
+  specsDir: string,
+  goal: string,
+  currentStep: string,
+  planContent: string
+): string {
+  let content = readPrompt('commands/auto-step.md', specsDir);
+  content = content.replace(/\{\{goal\}\}/g, goal);
+  content = content.replace(/\{\{currentStep\}\}/g, currentStep);
+  content = content.replace(/\{\{planContent\}\}/g, planContent);
+  return content;
 }
 
 // ─── Levenshtein ──────────────────────────────────────────────────────────────
