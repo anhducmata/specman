@@ -23,7 +23,7 @@ program
 // ─── specman init ───
 program
   .command('init')
-  .option('--with <assistant>', 'Ask a local AI CLI to fill specs: claude, codex, cursor')
+  .option('--with <assistant>', 'Ask a local AI CLI to fill specs: claude, codex, gemini, aider, q')
   .option('--prompt', 'Print a prompt for filling specs instead of asking interactively')
   .option('--skip-ai', 'Create files only; skip the interactive AI prompt')
   .description('Create specs structure and AI tool rules')
@@ -93,7 +93,7 @@ program
 // ─── specman run ───
 program
   .command('run [goal...]')
-  .option('--with <assistant>', 'Choose AI CLI to use: claude, codex')
+  .option('--with <assistant>', 'Choose AI CLI to use: claude, codex, gemini, aider, q')
   .option('--resume', 'Resume an existing plan without starting over')
   .description('Use AI to plan and execute a goal step-by-step')
   .action(async (goal: string[], options: { with?: string; resume?: boolean }) => {

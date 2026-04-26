@@ -16,6 +16,7 @@ import {
   runAssistantNonInteractive,
   autoPlanPrompt,
   autoStepPrompt,
+  assistantLabel,
   type AssistantCli,
 } from '../core/ai.js';
 
@@ -77,7 +78,7 @@ export async function runCommand(root: string, goalArgs: string[], options: RunO
   } else if (available.length > 1 && isInteractiveTerminal()) {
     chosen = await selectMenu(
       'Choose AI CLI for execution',
-      available.map((a, i) => ({ key: String(i + 1), label: a, value: a })),
+      available.map((a, i) => ({ key: String(i + 1), label: assistantLabel(a), value: a })),
       chosen,
     );
   }

@@ -4,9 +4,22 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { icons, c, printSection, printCallout, withLoader } from './ui.js';
 
-export type AssistantCli = 'claude' | 'codex' | 'cursor';
+export type AssistantCli = 'claude' | 'codex' | 'gemini' | 'aider' | 'q';
 
-const ASSISTANTS: AssistantCli[] = ['claude', 'codex', 'cursor'];
+const ASSISTANTS: AssistantCli[] = ['claude', 'codex', 'gemini', 'aider', 'q'];
+
+/** Human-readable labels for CLI display */
+const ASSISTANT_LABELS: Record<AssistantCli, string> = {
+  claude: 'Claude CLI',
+  codex:  'Codex CLI',
+  gemini: 'Gemini CLI',
+  aider:  'Aider',
+  q:      'Amazon Q',
+};
+
+export function assistantLabel(cli: AssistantCli): string {
+  return ASSISTANT_LABELS[cli] ?? cli;
+}
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 
@@ -44,6 +57,9 @@ export async function detectAvailableAssistants(): Promise<AssistantCli[]> {
   const checks: Array<{ name: AssistantCli; bin: string }> = [
     { name: 'claude', bin: 'claude' },
     { name: 'codex',  bin: 'codex'  },
+    { name: 'gemini', bin: 'gemini' },
+    { name: 'aider',  bin: 'aider'  },
+    { name: 'q',      bin: 'q'      },
   ];
 
   const results = await Promise.all(
@@ -65,12 +81,6 @@ function isCommandAvailable(command: string): Promise<boolean> {
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 export async function runAssistant(root: string, assistant: AssistantCli, prompt: string): Promise<void> {
-  if (assistant === 'cursor') {
-    console.log(`  ${icons.warn}  Cursor does not expose a stable local CLI for this workflow.`);
-    console.log(`  Use this prompt in Cursor Agent instead:\n`);
-    console.log(prompt);
-    return;
-  }
 
   const { command, args } = buildCommand(assistant, prompt);
   console.log();
@@ -91,10 +101,6 @@ export async function runAssistantNonInteractive(
   allowWrites: boolean,
   spinnerLabel?: string,
 ): Promise<void> {
-  if (assistant === 'cursor') {
-    printManualPromptFallback(prompt);
-    return;
-  }
 
   const { command, args } = buildNonInteractiveCommand(assistant, prompt, allowWrites);
   
@@ -114,18 +120,18 @@ export async function runAssistantNonInteractive(
 function buildCommand(assistant: AssistantCli, prompt: string): { command: string; args: string[] } {
   switch (assistant) {
     case 'claude':
-      // claude -p "prompt" --dangerously-skip-permissions
       return { command: 'claude', args: ['-p', prompt, '--dangerously-skip-permissions'] };
     case 'codex':
-      // codex exec "prompt" with disk read+write permissions
       return {
         command: 'codex',
-        args: [
-          'exec',
-          '-c', 'sandbox_permissions=["disk-full-read-access","disk-write-access"]',
-          prompt,
-        ],
+        args: ['exec', '-c', 'sandbox_permissions=["disk-full-read-access","disk-write-access"]', prompt],
       };
+    case 'gemini':
+      return { command: 'gemini', args: ['-p', prompt] };
+    case 'aider':
+      return { command: 'aider', args: ['--message', prompt, '--yes'] };
+    case 'q':
+      return { command: 'q', args: ['chat', prompt, '--trust-all-tools'] };
     default:
       return { command: assistant, args: [prompt] };
   }
@@ -141,17 +147,27 @@ function buildNonInteractiveCommand(
 ): { command: string; args: string[] } {
   switch (assistant) {
     case 'claude': {
-      const args = ['-p', prompt, '--dangerously-skip-permissions'];
-      return { command: 'claude', args };
+      return { command: 'claude', args: ['-p', prompt, '--dangerously-skip-permissions'] };
     }
     case 'codex': {
       const perms = allowWrites
         ? '["disk-full-read-access","disk-write-access","network-outbound-disabled"]'
         : '["disk-full-read-access","network-outbound-disabled"]';
-      return {
-        command: 'codex',
-        args: ['exec', '-c', `sandbox_permissions=${perms}`, prompt],
-      };
+      return { command: 'codex', args: ['exec', '-c', `sandbox_permissions=${perms}`, prompt] };
+    }
+    case 'gemini': {
+      return { command: 'gemini', args: ['-p', prompt] };
+    }
+    case 'aider': {
+      const args = ['--message', prompt, '--yes'];
+      if (!allowWrites) args.push('--no-auto-commits');
+      return { command: 'aider', args };
+    }
+    case 'q': {
+      const args = ['chat', '--non-interactive'];
+      if (allowWrites) args.push('--trust-all-tools');
+      args.push(prompt);
+      return { command: 'q', args };
     }
     default:
       return { command: assistant, args: [prompt] };

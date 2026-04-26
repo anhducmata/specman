@@ -17,7 +17,7 @@ import {
   c,
 } from '../core/ui.js';
 import { syncCommand } from './sync.js';
-import { normalizeAssistant, runAssistant, specsPrompt, suggestAssistant, detectAvailableAssistants, type AssistantCli } from '../core/ai.js';
+import { normalizeAssistant, runAssistant, specsPrompt, suggestAssistant, detectAvailableAssistants, assistantLabel, type AssistantCli } from '../core/ai.js';
 
 interface InitOptions {
   assistant?: string;
@@ -193,11 +193,8 @@ async function askSpecGenerationMode(available: AssistantCli[]): Promise<Assista
   const choices: { key: string; label: string; value: AssistantCli | 'skip' }[] = [];
   let keyIndex = 1;
 
-  if (available.includes('claude')) {
-    choices.push({ key: String(keyIndex++), label: 'Claude CLI', value: 'claude' });
-  }
-  if (available.includes('codex')) {
-    choices.push({ key: String(keyIndex++), label: 'Codex CLI', value: 'codex' });
+  for (const cli of available) {
+    choices.push({ key: String(keyIndex++), label: assistantLabel(cli), value: cli });
   }
 
   choices.push({ key: String(keyIndex++), label: 'Just the default structure', value: 'skip' });
@@ -208,8 +205,7 @@ async function askSpecGenerationMode(available: AssistantCli[]): Promise<Assista
 
 function printInitNextSteps(): void {
   printSection('Next Steps');
-  console.log(`  ${c.bold(c.cyanB('1'))}  Run ${c.cyan('specman init --with claude')} or ${c.cyan('specman init --with codex')} to let AI fill specs`);
-  console.log(`  ${c.bold(c.cyanB('2'))}  Run ${c.cyan('specman init --prompt')} to print a prompt for any AI tool`);
-  console.log(`  ${c.bold(c.cyanB('3'))}  Run ${c.cyan('specman validate')} after specs are filled`);
+  console.log(`  ${c.bold(c.cyanB('1'))}  Run ${c.cyan('specman init --with <tool>')} to let AI fill specs ${c.dim('(claude, codex, gemini, aider, q)')}`);
+  console.log(`  ${c.bold(c.cyanB('2'))}  Run ${c.cyan('specman validate')} after specs are filled`);
   console.log();
 }

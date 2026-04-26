@@ -62,6 +62,9 @@ Initialize the spec structure with interactive file selection and optional AI-po
 specman init                    # Interactive setup
 specman init --with claude      # Auto-fill specs using Claude CLI
 specman init --with codex       # Auto-fill specs using Codex CLI
+specman init --with gemini      # Auto-fill specs using Gemini CLI
+specman init --with aider       # Auto-fill specs using Aider
+specman init --with q           # Auto-fill specs using Amazon Q
 specman init --prompt           # Print a prompt for any AI tool
 specman init --skip-ai          # Create files only, no AI prompt
 ```
@@ -147,6 +150,7 @@ Use AI to plan and execute a goal step-by-step with interactive task selection.
 ```bash
 specman run "Implement user authentication"
 specman run --with codex "Add rate limiting"
+specman run --with gemini "Refactor database layer"
 specman run --resume            # Resume an interrupted plan
 ```
 
@@ -229,12 +233,15 @@ The generated instruction files tell AI agents to:
 
 ## Supported AI Tools
 
-| Tool | Instruction File | Auto-detect |
-|------|-----------------|-------------|
-| Claude (Anthropic) | `CLAUDE.md` | ✓ |
-| Codex (OpenAI) | `CODEX.md` | ✓ |
-| Cursor | `.cursor/rules/specman.mdc` | — |
-| GitHub Copilot | `.github/copilot-instructions.md` | — |
+| Tool | Instruction File | CLI Integration |
+|------|-----------------|----------------|
+| Claude (Anthropic) | `CLAUDE.md` | ✓ `--with claude` |
+| Codex (OpenAI) | `CODEX.md` | ✓ `--with codex` |
+| Gemini (Google) | — | ✓ `--with gemini` |
+| Aider | — | ✓ `--with aider` |
+| Amazon Q | — | ✓ `--with q` |
+| Cursor | `.cursor/rules/specman.mdc` | sync only |
+| GitHub Copilot | `.github/copilot-instructions.md` | sync only |
 | Generic Agents | `AGENTS.md` | — |
 
 ## License

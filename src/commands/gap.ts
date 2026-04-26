@@ -21,6 +21,7 @@ import {
   runAssistantNonInteractive,
   gapPrompt,
   printManualPromptFallback,
+  assistantLabel,
   type AssistantCli,
 } from '../core/ai.js';
 
@@ -182,7 +183,7 @@ async function maybeRunAiGapAnalysis(
   if (available.length > 1) {
     chosen = await selectMenu(
       'Choose AI CLI',
-      available.map((a, i) => ({ key: String(i + 1), label: a, value: a })),
+      available.map((a, i) => ({ key: String(i + 1), label: assistantLabel(a), value: a })),
       chosen,
     );
   }

@@ -19,6 +19,7 @@ import {
   codeToSpecsPrompt,
   specsToCodePrompt,
   printManualPromptFallback,
+  assistantLabel,
   type AssistantCli,
 } from '../core/ai.js';
 import {
@@ -208,7 +209,7 @@ async function syncWithAi(root: string, direction: 'code-to-specs' | 'specs-to-c
   if (available.length > 1) {
     chosen = await selectMenu(
       'Choose AI CLI',
-      available.map((a, i) => ({ key: String(i + 1), label: a, value: a })),
+      available.map((a, i) => ({ key: String(i + 1), label: assistantLabel(a), value: a })),
       chosen,
     );
   } else {
