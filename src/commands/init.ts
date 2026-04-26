@@ -17,7 +17,7 @@ import {
   c,
 } from '../core/ui.js';
 import { syncCommand } from './sync.js';
-import { normalizeAssistant, runAssistant, specsPrompt, suggestAssistant, type AssistantCli } from '../core/ai.js';
+import { normalizeAssistant, runAssistant, specsPrompt, suggestAssistant, detectAvailableAssistants, type AssistantCli } from '../core/ai.js';
 
 interface InitOptions {
   assistant?: string;
@@ -58,7 +58,43 @@ export async function initCommand(root: string, options: InitOptions = {}): Prom
     console.log(`  ${icons.warn}  No technologies detected — add them manually later.`);
   }
 
-  // Create .specman directory
+  // ── Ask for AI Tool ──
+  let selectedAiTool: AssistantCli | 'skip' | 'prompt' = 'skip';
+  let shouldRunAi = false;
+
+  if (!options.noPrompt) {
+    const assistant = normalizeAssistant(options.assistant);
+    if (options.assistant && !assistant) {
+      const suggestion = suggestAssistant(options.assistant);
+      if (suggestion) {
+        printCallout('warn', [
+          `Unknown assistant CLI: "${options.assistant}". Did you mean "${suggestion}"?`,
+          `Using "${suggestion}" instead.`,
+        ]);
+        selectedAiTool = suggestion;
+        shouldRunAi = true;
+      } else {
+        printCallout('error', [
+          `Unknown assistant CLI: "${options.assistant}".`,
+          'Supported: claude, codex, cursor.',
+        ]);
+        process.exit(1);
+      }
+    } else if (assistant) {
+      selectedAiTool = assistant;
+      shouldRunAi = true;
+    } else if (options.prompt) {
+      selectedAiTool = 'prompt';
+    } else if (isInteractiveTerminal()) {
+      const available = await detectAvailableAssistants();
+      selectedAiTool = await askSpecGenerationMode(available);
+      if (selectedAiTool !== 'skip') {
+        shouldRunAi = true;
+      }
+    }
+  }
+
+  // ── Create Files ──
   await ensureSpecmanDir(root);
 
   // Define all files to create
@@ -71,8 +107,8 @@ export async function initCommand(root: string, options: InitOptions = {}): Prom
     // Product
     { path: join(specsDir, 'product', 'requirements.md'), content: templates.productRequirements() },
     // Engineering
-    { path: join(specsDir, 'engineering', 'coding-rules.md'),  content: templates.codingRules() },
-    { path: join(specsDir, 'engineering', 'testing-rules.md'), content: templates.testingRules() },
+    { path: join(specsDir, 'engineering', 'coding-rules.md'),  content: templates.codingRules(scan) },
+    { path: join(specsDir, 'engineering', 'testing-rules.md'), content: templates.testingRules(scan) },
     // Architecture
     { path: join(specsDir, 'architecture', 'system-overview.md'), content: templates.systemOverview() },
     { path: join(specsDir, 'architecture', 'components.md'),       content: templates.components() },
@@ -143,68 +179,30 @@ export async function initCommand(root: string, options: InitOptions = {}): Prom
     { icon: icons.info,    label: 'Files skipped', value: skipped, color: c.dim  },
   ]);
 
-  await maybeGenerateSpecsWithAi(root, options);
+  if (selectedAiTool === 'prompt') {
+    console.log(specsPrompt());
+  } else if (shouldRunAi && selectedAiTool !== 'skip') {
+    await runAssistant(root, selectedAiTool, specsPrompt());
+  } else {
+    printInitNextSteps();
+  }
 }
 
-async function maybeGenerateSpecsWithAi(root: string, options: InitOptions): Promise<void> {
-  if (options.noPrompt) {
-    printInitNextSteps();
-    return;
+async function askSpecGenerationMode(available: AssistantCli[]): Promise<AssistantCli | 'skip'> {
+  const choices: { key: string; label: string; value: AssistantCli | 'skip' }[] = [];
+  let keyIndex = 1;
+
+  if (available.includes('claude')) {
+    choices.push({ key: String(keyIndex++), label: 'Claude CLI', value: 'claude' });
+  }
+  if (available.includes('codex')) {
+    choices.push({ key: String(keyIndex++), label: 'Codex CLI', value: 'codex' });
   }
 
-  const assistant = normalizeAssistant(options.assistant);
-  if (options.assistant && !assistant) {
-    const suggestion = suggestAssistant(options.assistant);
-    if (suggestion) {
-      printCallout('warn', [
-        `Unknown assistant CLI: "${options.assistant}". Did you mean "${suggestion}"?`,
-        `Using "${suggestion}" instead.`,
-      ]);
-      await runAssistant(root, suggestion, specsPrompt());
-      return;
-    }
-    printCallout('error', [
-      `Unknown assistant CLI: "${options.assistant}".`,
-      'Supported: claude, codex, cursor.',
-    ]);
-    process.exit(1);
-  }
+  choices.push({ key: String(keyIndex++), label: 'Just the default structure', value: 'skip' });
 
-  if (assistant) {
-    await runAssistant(root, assistant, specsPrompt());
-    return;
-  }
-
-  if (options.prompt) {
-    console.log(specsPrompt());
-    return;
-  }
-
-  if (!isInteractiveTerminal()) {
-    printInitNextSteps();
-    return;
-  }
-
-  const selected = await askSpecGenerationMode();
-  if (selected === 'skip') {
-    printInitNextSteps();
-    return;
-  }
-  if (selected === 'prompt') {
-    console.log(specsPrompt());
-    return;
-  }
-  await runAssistant(root, selected, specsPrompt());
-}
-
-async function askSpecGenerationMode(): Promise<AssistantCli | 'prompt' | 'skip'> {
-  const choice = await selectMenu('Fill Specs Now?', [
-    { key: '1', label: 'Claude CLI',   value: 'claude' as const },
-    { key: '2', label: 'Codex CLI',    value: 'codex'  as const },
-    { key: '3', label: 'Print prompt', value: 'prompt' as const },
-    { key: '4', label: 'Skip',         value: 'skip'   as const },
-  ], 'skip');
-  return choice as AssistantCli | 'prompt' | 'skip';
+  const choice = await selectMenu('Which tool to update the specs?', choices, 'skip');
+  return choice;
 }
 
 function printInitNextSteps(): void {

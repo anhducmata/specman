@@ -1,5 +1,6 @@
 import { stdout, stdin } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import * as readline from 'node:readline';
 
 // ─── Terminal capability detection ───────────────────────────────────────────
 
@@ -261,23 +262,85 @@ export async function selectMenu<T extends string>(
   defaultValue?: T,
 ): Promise<T> {
   printSection(title);
-  for (const choice of choices) {
-    console.log(`  ${c.bold(c.cyanB(choice.key))}  ${choice.label}`);
-  }
-  console.log();
 
-  const rl = createInterface({ input: stdin, output: stdout });
-  try {
-    const prompt = supportsColorOutput()
-      ? `  ${c.dim('Select')} ${c.cyan('[' + choices.map(c => c.key).join('/') + ']')}${defaultValue ? c.dim(` (${defaultValue})`) : ''}: `
-      : `  Select [${choices.map(c => c.key).join('/')}]: `;
-
-    const answer = (await rl.question(prompt)).trim().toLowerCase();
-    const found = choices.find(ch => ch.key === answer || ch.label.toLowerCase() === answer || ch.value === answer);
-    return found?.value ?? (defaultValue as T) ?? choices[choices.length - 1].value;
-  } finally {
-    rl.close();
+  if (!isInteractiveTerminal()) {
+    return defaultValue ?? choices[choices.length - 1].value;
   }
+
+  let selectedIndex = 0;
+  if (defaultValue) {
+    const idx = choices.findIndex(c => c.value === defaultValue);
+    if (idx !== -1) selectedIndex = idx;
+  }
+
+  stdout.write('\x1B[?25l'); // hide cursor
+
+  const render = () => {
+    let output = '';
+    for (let i = 0; i < choices.length; i++) {
+      const choice = choices[i];
+      const isSelected = i === selectedIndex;
+      const prefix = isSelected ? c.cyan('❯') : ' ';
+      const label = isSelected ? c.cyanB(choice.label) : choice.label;
+      const hint = c.dim(`(${choice.key})`);
+      output += `  ${prefix} ${label}  ${hint}\n`;
+    }
+    stdout.write(output);
+  };
+
+  const clearLines = (n: number) => {
+    stdout.write(`\x1B[${n}A\x1B[J`);
+  };
+
+  render();
+
+  return new Promise<T>((resolve) => {
+    const onKeypress = (str: string, key: readline.Key) => {
+      if (key && key.name === 'up') {
+        selectedIndex = (selectedIndex - 1 + choices.length) % choices.length;
+        clearLines(choices.length);
+        render();
+      } else if (key && key.name === 'down') {
+        selectedIndex = (selectedIndex + 1) % choices.length;
+        clearLines(choices.length);
+        render();
+      } else if (key && (key.name === 'return' || key.name === 'enter')) {
+        cleanup();
+        console.log();
+        resolve(choices[selectedIndex].value);
+      } else if (key && key.ctrl && key.name === 'c') {
+        cleanup();
+        process.exit(0);
+      } else if (str) {
+        const char = str.toLowerCase();
+        const matchIndex = choices.findIndex(c => c.key.toLowerCase() === char);
+        if (matchIndex !== -1) {
+          selectedIndex = matchIndex;
+          clearLines(choices.length);
+          render();
+          cleanup();
+          console.log();
+          resolve(choices[selectedIndex].value);
+        }
+      }
+    };
+
+    const cleanup = () => {
+      stdout.write('\x1B[?25h'); // show cursor
+      if (stdin.isTTY) {
+        stdin.setRawMode(false);
+      }
+      stdin.removeListener('keypress', onKeypress);
+      stdin.pause();
+    };
+
+    readline.emitKeypressEvents(stdin);
+    if (stdin.isTTY) {
+      stdin.setRawMode(true);
+    }
+    stdin.resume();
+    stdin.on('keypress', onKeypress);
+  });
 }
 
 // ─── Confirm prompt ───────────────────────────────────────────────────────────

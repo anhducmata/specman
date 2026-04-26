@@ -9,6 +9,7 @@ import { syncCommand } from './commands/sync.js';
 import { validateCommand } from './commands/validate.js';
 import { removeCommand } from './commands/remove.js';
 import { gapCommand } from './commands/gap.js';
+import { runCommand } from './commands/run.js';
 
 const program = new Command();
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,16 @@ program
   .description('Safely remove specman-managed files from this repository')
   .action(async (options: { yes?: boolean }) => {
     await removeCommand(process.cwd(), options);
+  });
+
+// ─── specman run ───
+program
+  .command('run [goal...]')
+  .option('--with <assistant>', 'Choose AI CLI to use: claude, codex')
+  .option('--resume', 'Resume an existing plan without starting over')
+  .description('Use AI to plan and execute a goal step-by-step')
+  .action(async (goal: string[], options: { with?: string; resume?: boolean }) => {
+    await runCommand(process.cwd(), goal, options);
   });
 
 program.parse();
