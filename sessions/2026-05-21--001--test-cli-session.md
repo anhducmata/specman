@@ -1,0 +1,43 @@
+---
+id: "2026-05-21--001"
+date: "2026-05-21"
+ai_system: "claude-sonnet-4-6"
+operator: "vanduc.nguyen@amili.asia"
+projects: ["permission-service"]
+status: "in-progress"
+duration_minutes: null
+decisions_made: []
+related_sessions: []
+---
+
+# Session: [Short Title]
+
+## Context
+<!-- State of the world when this session started.
+     Include: branch, known issues, what prompted this work. -->
+
+## Goal
+<!-- Single sentence: what is this session trying to accomplish? -->
+
+## Actions Taken
+<!-- Ordered list of concrete actions. Fill as you go. -->
+1. 
+
+## Decisions Made
+<!-- Link to decisions/ files created in this session, or inline if minor. -->
+
+## Reasoning Trace
+<!-- Key reasoning steps. MOST IMPORTANT section for RL.
+     Be specific: "I chose X over Y because Z" -->
+
+## Outcome
+<!-- Filled at end of session. What actually happened? -->
+
+## Surprises / Anomalies
+<!-- Anything that didn't match prior expectations. -->
+
+## Open Items
+<!-- What was explicitly not done and why. -->
+
+## Next Session Hints
+<!-- What should the next session starting in this context know? -->
