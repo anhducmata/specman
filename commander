@@ -110,18 +110,17 @@ OQ
     echo "  ✓ Project already exists in KB: projects/$project_name/"
   fi
 
-  # ── 2. Write CLAUDE.md into the user's project ──────────────────────────────
+  # ── 2. CLAUDE.md — create or inject into existing ───────────────────────────
   local claude_md="$project_dir/CLAUDE.md"
-  if [[ -f "$claude_md" && $force -eq 0 ]]; then
-    echo "  CLAUDE.md already exists (use --force to overwrite)"
-  else
-    cat > "$claude_md" << CLAUDEMD
-# Commander KB — Bootstrap
+  local commander_block
+  commander_block=$(cat << BLOCK
+<!-- commander:begin -->
+## Commander KB — Bootstrap
 
 You have a Commander knowledge base at \`$COMMANDER_DIR\`.
 Load it at the start of every session using the protocol below.
 
-## Phase 1 — Always Load (Tier 1, ~3K tokens) — CACHE THIS PREFIX
+### Phase 1 — Always Load (Tier 1, ~3K tokens) — CACHE THIS PREFIX
 
 Read these files from \`$COMMANDER_DIR\`:
 - \`identity/constitution.md\`
@@ -131,55 +130,59 @@ Read these files from \`$COMMANDER_DIR\`:
 Place a prompt cache breakpoint after these three files.
 **Cost impact: 90% reduction on Tier 1 tokens across repeated sessions.**
 
-## Phase 2 — Retrieve by Project (Tier 2, ≤ 3 files)
+### Phase 2 — Retrieve by Project (Tier 2, ≤ 3 files)
 
 Current project: \`$project_name\`
 
-Always read:
-- \`projects/$project_name/gotchas.md\`
+Always read: \`projects/$project_name/gotchas.md\`
+If unfamiliar: \`projects/$project_name/overview.md\`, \`architecture.md\`
+For decisions: top-2 \`decisions/DEC-NNN--*.md\` by tag match
 
-If unfamiliar with this project:
-- \`projects/$project_name/overview.md\`
-- \`projects/$project_name/architecture.md\`
+### Phase 3 — Recent Sessions (Tier 3, ≤ 3 sessions)
 
-For architecture decisions, top-2 by tag match:
-- \`decisions/DEC-NNN--*.md\`
+Read \`meta/session-index.md\`, filter by \`$project_name\` + last 30 days, load top-3.
+Score: \`0.6×relevance + 0.25×recency + 0.15×importance\` — total ≤8K tokens.
 
-## Phase 3 — Recent Sessions (Tier 3, ≤ 3 sessions)
-
-1. Read \`meta/session-index.md\`
-2. Filter by project \`$project_name\` + last 30 days
-3. Load top-3 by: \`score = 0.6×relevance + 0.25×recency + 0.15×importance\`
-
-## Token Budget
-
-| Tier | Tokens | When |
-|------|--------|------|
-| 1 — Core | ~3K | Always |
-| 2 — Semantic | ~2K | Selective |
-| 3 — Episodic | ~2K | Selective |
-| **Total** | **≤8K** | **Target** |
-
-## Session Workflow
+### Session Workflow
 
 \`\`\`bash
-commander session new <slug> $project_name   # start session
-commander session end                         # end session (hook auto-runs on Claude exit)
-commander decision new <slug> $project_name  # log a significant decision
-commander feedback new <slug>                 # log an outcome
+commander session new <slug> $project_name   # start
+commander session end                         # end (Stop hook auto-runs on Claude exit)
+commander decision new <slug> $project_name  # log decision
+commander feedback new <slug>                 # log outcome
 \`\`\`
-CLAUDEMD
-    echo "  ✓ CLAUDE.md written → $project_dir/CLAUDE.md"
+<!-- commander:end -->
+BLOCK
+)
+
+  if [[ ! -f "$claude_md" ]]; then
+    # No CLAUDE.md — create fresh
+    printf "# %s\n\n%s\n" "$project_name" "$commander_block" > "$claude_md"
+    echo "  ✓ CLAUDE.md created → $claude_md"
+  elif grep -q "commander:begin" "$claude_md"; then
+    if [[ $force -eq 1 ]]; then
+      # Replace existing commander block
+      perl -i -0777 -pe 's/<!-- commander:begin -->.*?<!-- commander:end -->//s' "$claude_md"
+      printf "\n%s\n" "$commander_block" >> "$claude_md"
+      echo "  ✓ CLAUDE.md commander block updated (--force)"
+    else
+      echo "  ✓ CLAUDE.md already has commander block (use --force to update)"
+    fi
+  else
+    # CLAUDE.md exists but no commander block — append it
+    printf "\n%s\n" "$commander_block" >> "$claude_md"
+    echo "  ✓ CLAUDE.md exists — commander block appended"
   fi
 
-  # ── 3. Write .claude/settings.json into the user's project ──────────────────
+  # ── 3. .claude/settings.json — create or merge Stop hook ────────────────────
   local settings_dir="$project_dir/.claude"
   local settings="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
 
-  if [[ -f "$settings" && $force -eq 0 ]]; then
-    echo "  .claude/settings.json already exists (use --force to overwrite)"
-  else
+  local hook_cmd="bash $COMMANDER_DIR/scripts/hooks/on-stop.sh"
+
+  if [[ ! -f "$settings" ]]; then
+    # No settings.json — create fresh
     cat > "$settings" << JSON
 {
   "hooks": {
@@ -189,7 +192,7 @@ CLAUDEMD
         "hooks": [
           {
             "type": "command",
-            "command": "bash $COMMANDER_DIR/scripts/hooks/on-stop.sh"
+            "command": "$hook_cmd"
           }
         ]
       }
@@ -197,7 +200,39 @@ CLAUDEMD
   }
 }
 JSON
-    echo "  ✓ .claude/settings.json written (Stop hook → commander)"
+    echo "  ✓ .claude/settings.json created (Stop hook wired)"
+  elif grep -q "on-stop.sh" "$settings"; then
+    if [[ $force -eq 1 ]]; then
+      # Update the path in case commander moved
+      sed -i '' "s|bash .*/on-stop.sh|$hook_cmd|g" "$settings"
+      echo "  ✓ .claude/settings.json Stop hook path updated (--force)"
+    else
+      echo "  ✓ .claude/settings.json already has Stop hook (use --force to update path)"
+    fi
+  else
+    # settings.json exists but no Stop hook — inject into existing hooks or add hooks key
+    if grep -q '"Stop"' "$settings"; then
+      # Stop key exists, append our hook into it
+      python3 - "$settings" "$hook_cmd" << 'PY'
+import sys, json
+path, cmd = sys.argv[1], sys.argv[2]
+with open(path) as f: data = json.load(f)
+data.setdefault("hooks", {}).setdefault("Stop", [])
+data["hooks"]["Stop"].append({"matcher": "", "hooks": [{"type": "command", "command": cmd}]})
+with open(path, "w") as f: json.dump(data, f, indent=2)
+PY
+      echo "  ✓ .claude/settings.json — Stop hook appended to existing hooks"
+    else
+      # No Stop key — add it via Python
+      python3 - "$settings" "$hook_cmd" << 'PY'
+import sys, json
+path, cmd = sys.argv[1], sys.argv[2]
+with open(path) as f: data = json.load(f)
+data.setdefault("hooks", {})["Stop"] = [{"matcher": "", "hooks": [{"type": "command", "command": cmd}]}]
+with open(path, "w") as f: json.dump(data, f, indent=2)
+PY
+      echo "  ✓ .claude/settings.json — Stop hook added"
+    fi
   fi
 
   # ── 4. Make commander scripts executable ────────────────────────────────────
