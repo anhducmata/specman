@@ -1,0 +1,1001 @@
+#!/usr/bin/env bash
+# specman CLI (sb)
+# Finds .specman/ by walking up from cwd — like git finds .git/
+
+set -e
+
+# ─── Locate .specman/ ──────────────────────────────────────────────────────
+
+find_kb_dir() {
+  local dir
+  dir="$(pwd)"
+  while [[ "$dir" != "/" ]]; do
+    [[ -d "$dir/.specman" ]] && echo "$dir/.specman" && return 0
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+KB_DIR=$(find_kb_dir 2>/dev/null || true)
+PROJECT_DIR=""
+[[ -n "$KB_DIR" ]] && PROJECT_DIR="$(dirname "$KB_DIR")"
+
+CURRENT_SESSION_FILE=""
+[[ -n "$PROJECT_DIR" ]] && CURRENT_SESSION_FILE="$PROJECT_DIR/.claude/current-session"
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+die() { echo "error: $*" >&2; exit 1; }
+
+need_kb() {
+  [[ -n "$KB_DIR" ]] || die "No .specman/ found. Run 'sb init' first."
+}
+
+git_in_kb() {
+  local msg="$1"; shift
+  cd "$PROJECT_DIR"
+  git add "$@" 2>/dev/null || true
+  git diff --cached --quiet || git commit -m "$msg"
+}
+
+# ─── ID helpers ───────────────────────────────────────────────────────────────
+
+next_session_id() {
+  local max=0
+  for f in "$KB_DIR/sessions"/????-??-??--???--*.md; do
+    [[ -f "$f" ]] || continue
+    local num
+    num=$(basename "$f" | sed 's/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}--\([0-9]\{3\}\)--.*/\1/')
+    num=$((10#$num)); (( num > max )) && max=$num
+  done
+  printf "%03d" $((max + 1))
+}
+
+next_decision_id() {
+  local max=0
+  for f in "$KB_DIR/decisions"/DEC-???--*.md; do
+    [[ -f "$f" ]] || continue
+    local num
+    num=$(basename "$f" | sed 's/DEC-\([0-9]\{3\}\)--.*/\1/')
+    num=$((10#$num)); (( num > max )) && max=$num
+  done
+  printf "DEC-%03d" $((max + 1))
+}
+
+next_feedback_id() {
+  local max=0
+  for f in "$KB_DIR/feedback"/FB-???--*.md; do
+    [[ -f "$f" ]] || continue
+    local num
+    num=$(basename "$f" | sed 's/FB-\([0-9]\{3\}\)--.*/\1/')
+    num=$((10#$num)); (( num > max )) && max=$num
+  done
+  printf "FB-%03d" $((max + 1))
+}
+
+# ─── Hook Registry ────────────────────────────────────────────────────────────
+# Format: "event|matcher|internal-cmd|description"
+
+HOOK_DEFS=(
+  "SessionStart||_hook-session-start|Inject Tier 1 KB into every session context automatically"
+  "UserPromptSubmit||_hook-auto-session|Auto-start a session when you submit the first prompt"
+  "PreToolUse|Bash|_hook-guard|Warn on dangerous shell commands (rm -rf, force-push, DROP TABLE)"
+  "PostToolUse|Edit|Write|MultiEdit|_hook-auto-stage|Track edited files in the active session log"
+  "PreCompact||_hook-pre-compact|Git snapshot before context compaction so no trace is lost"
+)
+
+hook_name_from_def() {
+  # Extract the internal command name → use as the hook identifier
+  echo "$1" | cut -d'|' -f3 | sed 's/^_hook-//'
+}
+
+hook_enabled() {
+  local name="$1"
+  local settings="$PROJECT_DIR/.claude/settings.json"
+  [[ -f "$settings" ]] && grep -q "_hook-${name}" "$settings"
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_init() {
+  local force=0
+  [[ "${1:-}" == "--force" ]] && force=1
+
+  local project_dir
+  project_dir="$(pwd)"
+
+  local project_name
+  project_name=$(git -C "$project_dir" remote get-url origin 2>/dev/null \
+    | sed 's/.*[:/]\([^/]*\)\.git$/\1/' \
+    | sed 's/.*[:/]\([^/]*\)$/\1/' || true)
+  [[ -z "$project_name" ]] && project_name=$(basename "$project_dir")
+
+  echo "Initializing specman for: $project_name"
+  echo ""
+
+  # ── 1. Create .specman/ structure ─────────────────────────────────────────
+  local kb="$project_dir/.specman"
+  mkdir -p "$kb/sessions" "$kb/decisions" "$kb/feedback" "$kb/patterns" "$kb/meta"
+
+  if [[ ! -f "$kb/identity/constitution.md" || $force -eq 1 ]]; then
+    mkdir -p "$kb/identity"
+    cat > "$kb/identity/constitution.md" << CONST
+# Constitution
+
+Priority order when principles conflict:
+
+## 1. Broadly Safe
+Preserve the ability of humans to observe, correct, and override.
+Never remove audit mechanisms, access controls, or oversight hooks.
+
+## 2. Broadly Ethical
+No deception. No irreversible actions without explicit confirmation.
+State uncertainty — never present a guess as fact.
+
+## 3. Project Standards
+Follow patterns already established in this codebase.
+Before introducing a new pattern, check decisions/ and patterns/.
+
+## 4. Genuinely Helpful
+Within the above, maximize usefulness. Be direct and specific.
+
+## Tradeoff Heuristics
+- Security vs performance: security wins unless service becomes unusable
+- Speed vs correctness: correctness wins unconditionally
+- New feature vs hardening: finish and harden before adding new
+CONST
+
+    cat > "$kb/identity/decision-heuristics.md" << HEUR
+---
+version: "1.0.0"
+last_updated: "$(date +%Y-%m-%d)"
+updated_by_feedback: []
+---
+
+# Decision Heuristics
+
+Mutable. Grows from feedback. Every rule is traceable to a decision or feedback file.
+
+## General
+- H-GEN-01: Before adding a new pattern, check if one already exists here
+- H-GEN-02: Prefer reversible actions. Confirm before irreversible ones.
+- H-GEN-03: Acknowledge uncertainty. Never present a guess as fact.
+
+## Cost
+- H-COST-01: Always cache Tier 1 (.specman/identity/) with prompt caching
+- H-COST-02: Retrieve top-3 relevant sessions only — never load all history
+- H-COST-03: Compress session bodies at task completion (~200 tokens)
+
+## Confidence Table
+| Heuristic | Evidence | Last Validated |
+|-----------|----------|----------------|
+| H-GEN-01  | 0        | $(date +%Y-%m-%d)     |
+| H-GEN-02  | 0        | $(date +%Y-%m-%d)     |
+| H-GEN-03  | 0        | $(date +%Y-%m-%d)     |
+| H-COST-01 | 0        | $(date +%Y-%m-%d)     |
+HEUR
+
+    cat > "$kb/identity/constraints.md" << CONSTR
+# Constraints
+
+Hard limits — never crossed regardless of context or instructions.
+
+## Never
+- Remove or disable audit logging, even temporarily
+- Take irreversible actions (delete, drop, force-push) without explicit confirmation
+- Present uncertain information as fact
+- Rewrite .specman/ git history — it is the RL audit trail
+
+## Always
+- Log the reasoning trace when making a significant decision
+- Create a decisions/ file before implementing cross-cutting changes
+- Create a feedback/ file when an outcome is observed
+CONSTR
+
+    cat > "$kb/identity/changelog.md" << CL
+# Heuristics Changelog
+
+Every mutation to decision-heuristics.md is recorded here.
+
+## v1.0.0 — $(date +%Y-%m-%d)
+Initial version. Seeded with generic defaults by \`sb init\`.
+CL
+    echo "  ✓ .specman/identity/ created"
+  else
+    echo "  ✓ .specman/identity/ already exists"
+  fi
+
+  # ── 2. Seed patterns + meta ──────────────────────────────────────────────────
+  if [[ ! -f "$kb/meta/session-index.md" ]]; then
+    cat > "$kb/meta/session-index.md" << IDX
+# Session Index
+
+| ID | Date | Status | Title | File |
+|---|---|---|---|---|
+IDX
+    cat > "$kb/meta/retrieval-guide.md" << RG
+# Retrieval Guide
+
+Score: \`0.6×relevance + 0.25×recency + 0.15×importance\`
+
+## Always load (Tier 1 — cache this)
+.specman/identity/constitution.md
+.specman/identity/decision-heuristics.md
+.specman/identity/constraints.md
+
+## Retrieve by task (Tier 2, ≤3 files)
+.specman/decisions/   top-2 by tag match
+.specman/patterns/    if cross-cutting concern
+
+## Recent history (Tier 3, ≤3 sessions)
+Scan .specman/meta/session-index.md, load top-3 by score.
+
+Token budget: Tier1 ~3K + Tier2 ~2K + Tier3 ~2K = ≤8K total
+RG
+    echo "  ✓ .specman/meta/ created"
+  fi
+
+  if [[ ! -f "$kb/patterns/general.md" ]]; then
+    cat > "$kb/patterns/general.md" << PAT
+# General Patterns
+
+Promoted from feedback when a lesson appears 2+ times.
+
+_(empty — grows over time)_
+PAT
+    echo "  ✓ .specman/patterns/ created"
+  fi
+
+  # ── 3. CLAUDE.md — create or inject ──────────────────────────────────────────
+  local claude_md="$project_dir/CLAUDE.md"
+  local block
+  block=$(cat << BLOCK
+<!-- specman:begin -->
+## specman KB
+
+This project has a knowledge base at \`.specman/\`.
+Load it at the start of every session.
+
+### Tier 1 — Always load (cache this prefix)
+\`.specman/identity/constitution.md\`
+\`.specman/identity/decision-heuristics.md\`
+\`.specman/identity/constraints.md\`
+
+### Tier 2 — Retrieve by task (≤3 files, score: 0.6×relevance+0.25×recency+0.15×importance)
+\`.specman/decisions/\` — top-2 matching current topic
+\`.specman/patterns/\` — if cross-cutting
+
+### Tier 3 — Recent sessions (top-3 from .specman/meta/session-index.md)
+
+### Commands
+\`\`\`bash
+sb session new <slug>     # start session
+sb session end            # end session (Stop hook auto-runs on Claude exit)
+sb decision new <slug>    # log a decision
+sb feedback new <slug>    # log an outcome
+\`\`\`
+<!-- specman:end -->
+BLOCK
+)
+
+  if [[ ! -f "$claude_md" ]]; then
+    printf "# %s\n\n%s\n" "$project_name" "$block" > "$claude_md"
+    echo "  ✓ CLAUDE.md created"
+  elif grep -q "specman:begin" "$claude_md"; then
+    if [[ $force -eq 1 ]]; then
+      perl -i -0777 -pe 's/<!-- specman:begin -->.*?<!-- specman:end -->//s' "$claude_md"
+      printf "\n%s\n" "$block" >> "$claude_md"
+      echo "  ✓ CLAUDE.md specman block updated"
+    else
+      echo "  ✓ CLAUDE.md already has specman block (--force to update)"
+    fi
+  else
+    printf "\n%s\n" "$block" >> "$claude_md"
+    echo "  ✓ CLAUDE.md exists — specman block appended"
+  fi
+
+  # ── 4. .claude/settings.json — create or merge Stop hook ────────────────────
+  local settings_dir="$project_dir/.claude"
+  local settings="$settings_dir/settings.json"
+  mkdir -p "$settings_dir"
+
+  if [[ ! -f "$settings" ]]; then
+    cat > "$settings" << JSON
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "sb _stop-hook"}]
+      }
+    ]
+  }
+}
+JSON
+    echo "  ✓ .claude/settings.json created (Stop hook wired)"
+  elif grep -q "_stop-hook" "$settings"; then
+    echo "  ✓ .claude/settings.json already has Stop hook (--force to update)"
+  else
+    python3 - "$settings" << 'PY'
+import sys, json
+path = sys.argv[1]
+with open(path) as f: data = json.load(f)
+data.setdefault("hooks", {}).setdefault("Stop", []).append(
+  {"matcher": "", "hooks": [{"type": "command", "command": "sb _stop-hook"}]})
+with open(path, "w") as f: json.dump(data, f, indent=2); f.write("\n")
+PY
+    echo "  ✓ .claude/settings.json Stop hook appended"
+  fi
+
+  # ── 5. Initial git commit ────────────────────────────────────────────────────
+  if git -C "$project_dir" rev-parse --git-dir &>/dev/null; then
+    cd "$project_dir"
+    git add .specman/ CLAUDE.md .claude/settings.json 2>/dev/null || true
+    git diff --cached --quiet || git commit -m "chore: init specman knowledge base"
+    echo "  ✓ Committed to git"
+  fi
+
+  echo ""
+  echo "Done. specman is ready in $project_name."
+  echo ""
+  echo "  sb hooks list              # see optional hooks"
+  echo "  sb session new <slug>      # start your first session"
+}
+
+cmd_eject() {
+  need_kb
+  local project_dir="$PROJECT_DIR"
+  local claude_md="$project_dir/CLAUDE.md"
+  local settings="$project_dir/.claude/settings.json"
+  local changed=0
+
+  echo "Ejecting specman from: $project_dir"
+  echo ""
+
+  if [[ -f "$claude_md" ]] && grep -q "specman:begin" "$claude_md"; then
+    perl -i -0777 -pe 's/\n?<!-- specman:begin -->.*?<!-- specman:end -->\n?//s' "$claude_md"
+    perl -i -pe 'chomp if eof' "$claude_md"
+    if ! grep -q '[^[:space:]]' "$claude_md" 2>/dev/null; then
+      rm -f "$claude_md"; echo "  ✓ CLAUDE.md deleted (was empty)"
+    else
+      echo "  ✓ specman block removed from CLAUDE.md"
+    fi
+    changed=1
+  fi
+
+  if [[ -f "$settings" ]] && grep -q "_stop-hook\|_hook-" "$settings"; then
+    python3 - "$settings" << 'PY'
+import sys, json, os
+path = sys.argv[1]
+with open(path) as f: data = json.load(f)
+for event in list(data.get("hooks", {}).keys()):
+  entries = data["hooks"][event]
+  entries = [h for h in entries if not any(
+    "_stop-hook" in str(s.get("command","")) or "_hook-" in str(s.get("command",""))
+    for s in h.get("hooks",[])
+  )]
+  if entries: data["hooks"][event] = entries
+  else: del data["hooks"][event]
+if not data.get("hooks"): data.pop("hooks", None)
+if data: open(path,"w").write(json.dumps(data, indent=2)+"\n")
+else: os.remove(path)
+PY
+    [[ -f "$settings" ]] && echo "  ✓ All specman hooks removed from .claude/settings.json" \
+                          || echo "  ✓ .claude/settings.json deleted"
+    rmdir "$project_dir/.claude" 2>/dev/null && echo "  ✓ .claude/ removed" || true
+    changed=1
+  fi
+
+  if [[ -d "$KB_DIR" ]]; then
+    rm -rf "$KB_DIR"
+    echo "  ✓ .specman/ removed"
+    changed=1
+  fi
+
+  [[ $changed -eq 1 ]] && echo "" && echo "specman removed from this project." \
+    || echo "Nothing to remove."
+}
+
+# ─── Hooks management ─────────────────────────────────────────────────────────
+
+cmd_hooks_list() {
+  need_kb
+  local settings="$PROJECT_DIR/.claude/settings.json"
+
+  printf "\n%-20s %-10s %s\n" "HOOK" "STATUS" "DESCRIPTION"
+  printf "%-20s %-10s %s\n" "────────────────────" "──────────" "───────────────────────────────────────────────────────"
+
+  # Stop hook is always core
+  local stop_status="disabled"
+  [[ -f "$settings" ]] && grep -q "_stop-hook" "$settings" && stop_status="enabled"
+  printf "%-20s %-10s %s\n" "stop" "[$stop_status]" "Auto-save session on Claude exit (core)"
+
+  for def in "${HOOK_DEFS[@]}"; do
+    local name desc
+    name=$(hook_name_from_def "$def")
+    desc=$(echo "$def" | rev | cut -d'|' -f1 | rev)
+    local status="disabled"
+    hook_enabled "$name" && status="enabled"
+    printf "%-20s %-10s %s\n" "$name" "[$status]" "$desc"
+  done
+  echo ""
+  echo "  sb hooks enable <name>    # add hook to .claude/settings.json"
+  echo "  sb hooks disable <name>   # remove hook from .claude/settings.json"
+  echo ""
+}
+
+cmd_hooks_enable() {
+  need_kb
+  local name="${1:?Usage: sb hooks enable <hook-name>}"
+  local settings="$PROJECT_DIR/.claude/settings.json"
+
+  # Find the definition
+  local matched_def=""
+  for def in "${HOOK_DEFS[@]}"; do
+    local n
+    n=$(hook_name_from_def "$def")
+    [[ "$n" == "$name" ]] && matched_def="$def" && break
+  done
+  [[ -n "$matched_def" ]] || die "Unknown hook: $name. Run 'sb hooks list' to see available hooks."
+
+  hook_enabled "$name" && echo "Hook '$name' is already enabled." && return 0
+
+  local event matcher cmd
+  event=$(echo "$matched_def" | cut -d'|' -f1)
+  matcher=$(echo "$matched_def" | cut -d'|' -f2)
+  cmd=$(echo "$matched_def" | cut -d'|' -f3)
+
+  # For PostToolUse the matcher field may contain pipe-separated tool names
+  # We need the matcher to be the whole middle portion (fields 2..N-1 before cmd)
+  # Since our format is event|matcher(s)|cmd|desc, extract properly
+  local parts
+  IFS='|' read -ra parts <<< "$matched_def"
+  # parts[0]=event, parts[-1]=desc, parts[-2]=cmd, everything in between = matcher
+  local n_parts=${#parts[@]}
+  matcher=""
+  for (( i=1; i<n_parts-2; i++ )); do
+    [[ -n "$matcher" ]] && matcher="${matcher}|"
+    matcher="${matcher}${parts[$i]}"
+  done
+  cmd="${parts[$((n_parts-2))]}"
+
+  python3 - "$settings" "$event" "$matcher" "sb $cmd" << 'PY'
+import sys, json, os
+path, event, matcher, command = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+if os.path.exists(path):
+  with open(path) as f: data = json.load(f)
+else:
+  data = {}
+data.setdefault("hooks", {}).setdefault(event, []).append(
+  {"matcher": matcher, "hooks": [{"type": "command", "command": command}]})
+with open(path, "w") as f: json.dump(data, f, indent=2); f.write("\n")
+PY
+
+  echo "Hook '$name' enabled → .claude/settings.json"
+}
+
+cmd_hooks_disable() {
+  need_kb
+  local name="${1:?Usage: sb hooks disable <hook-name>}"
+  local settings="$PROJECT_DIR/.claude/settings.json"
+
+  [[ -f "$settings" ]] || { echo "Hook '$name' is not enabled."; return 0; }
+  hook_enabled "$name" || { echo "Hook '$name' is not enabled."; return 0; }
+
+  python3 - "$settings" "_hook-${name}" << 'PY'
+import sys, json, os
+path, marker = sys.argv[1], sys.argv[2]
+with open(path) as f: data = json.load(f)
+for event in list(data.get("hooks", {}).keys()):
+  entries = data["hooks"][event]
+  entries = [h for h in entries if not any(
+    marker in str(s.get("command","")) for s in h.get("hooks",[])
+  )]
+  if entries: data["hooks"][event] = entries
+  else: del data["hooks"][event]
+if not data.get("hooks"): data.pop("hooks", None)
+if data: open(path,"w").write(json.dumps(data, indent=2)+"\n")
+else: os.remove(path)
+PY
+
+  echo "Hook '$name' disabled."
+}
+
+# ─── Internal hook handlers ───────────────────────────────────────────────────
+
+# SessionStart → inject Tier 1 KB into context
+cmd_hook_session_start() {
+  [[ -n "$KB_DIR" ]] || exit 0
+
+  local ctx=""
+  for f in \
+    "$KB_DIR/identity/constitution.md" \
+    "$KB_DIR/identity/decision-heuristics.md" \
+    "$KB_DIR/identity/constraints.md"; do
+    [[ -f "$f" ]] || continue
+    ctx="${ctx}
+
+### $(basename "$f" .md)
+$(cat "$f")"
+  done
+
+  [[ -z "$ctx" ]] && exit 0
+
+  # Append top-3 recent sessions from index
+  local index="$KB_DIR/meta/session-index.md"
+  if [[ -f "$index" ]]; then
+    local recent
+    recent=$(grep '|' "$index" | grep -v '^| ID' | grep -v '^|---' | tail -3)
+    [[ -n "$recent" ]] && ctx="${ctx}
+
+### Recent Sessions (last 3)
+$recent"
+  fi
+
+  python3 -c "
+import json, sys
+ctx = sys.stdin.read()
+print(json.dumps({'additionalContext': ctx.strip()}))
+" <<< "$ctx"
+}
+
+# UserPromptSubmit → auto-start session if none active
+cmd_hook_auto_session() {
+  [[ -n "$KB_DIR" ]] || exit 0
+  [[ -f "$CURRENT_SESSION_FILE" ]] && exit 0  # already active
+
+  # Read prompt from stdin JSON
+  local prompt
+  prompt=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('prompt','')[:60])" 2>/dev/null || echo "")
+  [[ -z "$prompt" ]] && exit 0
+
+  # Slugify the prompt
+  local slug
+  slug=$(echo "$prompt" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\{2,\}/-/g' | sed 's/^-\|-$//g' | cut -c1-40)
+  [[ -z "$slug" ]] && slug="auto"
+
+  mkdir -p "$KB_DIR/sessions"
+  local nnn date filename filepath
+  nnn=$(next_session_id)
+  date=$(date +%Y-%m-%d)
+  filename="${date}--${nnn}--${slug}.md"
+  filepath="$KB_DIR/sessions/$filename"
+
+  cat > "$filepath" << TMPL
+---
+id: "${date}--${nnn}"
+date: "${date}"
+slug: "${slug}"
+status: "in-progress"
+---
+
+# Session: ${slug}
+
+## Context
+Auto-started by UserPromptSubmit hook.
+
+## Goal
+
+## Actions Taken
+1.
+
+## Reasoning Trace
+
+## Outcome
+
+## Surprises
+
+## Next Session Hints
+TMPL
+
+  echo "$filepath" > "$CURRENT_SESSION_FILE"
+  cd "$PROJECT_DIR"
+  git add ".specman/sessions/$filename" 2>/dev/null || true
+  git diff --cached --quiet || git commit -m "session: start ${date}--${nnn}--${slug}" 2>/dev/null || true
+
+  exit 0
+}
+
+# PreToolUse (Bash matcher) → warn on dangerous commands
+cmd_hook_guard() {
+  [[ -n "$KB_DIR" ]] || exit 0
+
+  local command
+  command=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('command',''))" 2>/dev/null || echo "")
+  [[ -z "$command" ]] && exit 0
+
+  local warnings=()
+
+  echo "$command" | grep -qE 'rm\s+-[rRf]*f[rRf]*\s' && warnings+=("rm -rf detected")
+  echo "$command" | grep -qE 'git push.*--force|git push.*-f\b' && warnings+=("force push detected")
+  echo "$command" | grep -qiE 'DROP\s+TABLE|DROP\s+DATABASE|TRUNCATE' && warnings+=("destructive SQL detected")
+  echo "$command" | grep -qE 'git\s+reset\s+--hard' && warnings+=("git reset --hard detected")
+  echo "$command" | grep -qE '>\s*/dev/\w+|dd\s+if=' && warnings+=("low-level device write detected")
+
+  [[ ${#warnings[@]} -eq 0 ]] && exit 0
+
+  local warning_str
+  warning_str=$(printf '%s\n' "${warnings[@]}" | sed 's/^/- /')
+
+  # Log to feedback if active session
+  if [[ -f "$CURRENT_SESSION_FILE" ]]; then
+    local session_path
+    session_path=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+    if [[ -f "$session_path" ]]; then
+      echo "" >> "$session_path"
+      echo "## Guard Warning — $(date +%Y-%m-%dT%H:%M:%S)" >> "$session_path"
+      echo "Command: \`$command\`" >> "$session_path"
+      printf '%s\n' "${warnings[@]}" | sed 's/^/- /' >> "$session_path"
+    fi
+  fi
+
+  python3 -c "
+import json, sys
+warnings = sys.stdin.read().strip()
+print(json.dumps({
+  'additionalContext': f'[specman Guard] Dangerous operation flagged:\n{warnings}\nConfirm this is intentional before proceeding.'
+}))
+" <<< "$warning_str"
+}
+
+# PostToolUse (Edit|Write|MultiEdit matcher) → track files in session log
+cmd_hook_auto_stage() {
+  [[ -n "$KB_DIR" ]] || exit 0
+  [[ -f "$CURRENT_SESSION_FILE" ]] || exit 0
+
+  local file_path
+  file_path=$(python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+ti=d.get('tool_input',{})
+print(ti.get('file_path') or ti.get('path') or '')
+" 2>/dev/null || echo "")
+  [[ -z "$file_path" ]] && exit 0
+
+  local session_path
+  session_path=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  [[ -f "$session_path" ]] || exit 0
+
+  # Append to Actions Taken if not already listed
+  grep -qF "$file_path" "$session_path" 2>/dev/null || \
+    sed -i '' "/^## Actions Taken/a\\
+- edited: $file_path" "$session_path" 2>/dev/null || true
+
+  exit 0
+}
+
+# PreCompact → git snapshot before context compaction
+cmd_hook_pre_compact() {
+  [[ -n "$KB_DIR" ]] || exit 0
+  [[ -f "$CURRENT_SESSION_FILE" ]] || exit 0
+
+  local session_path
+  session_path=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  [[ -f "$session_path" ]] || exit 0
+
+  local slug
+  slug=$(basename "$session_path" .md)
+  cd "$PROJECT_DIR"
+  git add ".specman/sessions/$(basename "$session_path")" 2>/dev/null || true
+  git diff --cached --quiet || git commit -m "session: pre-compact snapshot $slug" 2>/dev/null || true
+
+  exit 0
+}
+
+# ─── Session commands ─────────────────────────────────────────────────────────
+
+cmd_session_new() {
+  need_kb
+  local slug="${1:?Usage: sb session new <slug>}"
+  mkdir -p "$KB_DIR/sessions"
+
+  local nnn date filename filepath
+  nnn=$(next_session_id)
+  date=$(date +%Y-%m-%d)
+  filename="${date}--${nnn}--${slug}.md"
+  filepath="$KB_DIR/sessions/$filename"
+
+  cat > "$filepath" << TMPL
+---
+id: "${date}--${nnn}"
+date: "${date}"
+slug: "${slug}"
+status: "in-progress"
+---
+
+# Session: ${slug}
+
+## Context
+
+## Goal
+
+## Actions Taken
+1.
+
+## Reasoning Trace
+
+## Outcome
+
+## Surprises
+
+## Next Session Hints
+TMPL
+
+  echo "$filepath" > "$CURRENT_SESSION_FILE"
+  git_in_kb "session: start ${date}--${nnn}--${slug}" ".specman/sessions/$filename"
+
+  echo "Session started: .specman/sessions/$filename"
+}
+
+cmd_session_end() {
+  need_kb
+  local filepath="${1:-}"
+  if [[ -z "$filepath" ]]; then
+    [[ -f "$CURRENT_SESSION_FILE" ]] || die "No active session."
+    filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  fi
+  [[ -f "$filepath" ]] || die "Session file not found: $filepath"
+
+  sed -i '' 's/status: "in-progress"/status: "completed"/' "$filepath"
+
+  local slug date id title rel
+  slug=$(basename "$filepath" .md)
+  date=$(grep '^date:' "$filepath" | head -1 | sed 's/date: *"\(.*\)"/\1/')
+  id=$(grep '^id:' "$filepath" | head -1 | sed 's/id: *"\(.*\)"/\1/')
+  title=$(grep '^# Session:' "$filepath" | head -1 | sed 's/# Session: *//')
+  rel=".specman/sessions/$(basename "$filepath")"
+
+  git_in_kb "session: complete $slug" ".specman/sessions/$(basename "$filepath")"
+
+  local index="$KB_DIR/meta/session-index.md"
+  if ! grep -q "$id" "$index" 2>/dev/null; then
+    echo "| $id | $date | completed | ${title:-$slug} | $rel |" >> "$index"
+    git_in_kb "index: update session-index" ".specman/meta/session-index.md"
+  fi
+
+  rm -f "$CURRENT_SESSION_FILE"
+  echo "Session completed: $rel"
+}
+
+cmd_decision_new() {
+  need_kb
+  local slug="${1:?Usage: sb decision new <slug>}"
+  mkdir -p "$KB_DIR/decisions"
+
+  local dec_id date filename filepath
+  dec_id=$(next_decision_id)
+  date=$(date +%Y-%m-%d)
+  filename="${dec_id}--${slug}.md"
+  filepath="$KB_DIR/decisions/$filename"
+
+  cat > "$filepath" << TMPL
+---
+id: "${dec_id}"
+date: "${date}"
+status: "proposed"
+tags: []
+---
+
+# ${dec_id}: ${slug}
+
+## Context
+
+## Options Considered
+
+### Option A: (Chosen)
+- Pros:
+- Cons:
+
+### Option B: (Rejected)
+- Pros:
+- Cons:
+
+## Decision
+
+## Rationale
+
+## Consequences
+
+## Review Trigger
+TMPL
+
+  git_in_kb "decision: ${dec_id}--${slug}" ".specman/decisions/$filename"
+  echo "Decision created: .specman/decisions/$filename"
+}
+
+cmd_feedback_new() {
+  need_kb
+  local slug="${1:?Usage: sb feedback new <slug>}"
+  mkdir -p "$KB_DIR/feedback"
+
+  local fb_id date filename filepath
+  fb_id=$(next_feedback_id)
+  date=$(date +%Y-%m-%d)
+  filename="${fb_id}--${slug}.md"
+  filepath="$KB_DIR/feedback/$filename"
+
+  cat > "$filepath" << TMPL
+---
+id: "${fb_id}"
+date: "${date}"
+outcome: "positive"
+references:
+  decisions: []
+  sessions: []
+heuristic_update_triggered: false
+---
+
+# ${fb_id}: ${slug}
+
+## What Was Expected
+
+## What Actually Happened
+
+## Delta Analysis
+
+## Lessons
+-
+
+## Heuristic Updates Recommended
+
+## Promoted to Patterns?
+TMPL
+
+  git_in_kb "feedback: ${fb_id}--${slug}" ".specman/feedback/$filename"
+  echo "Feedback created: .specman/feedback/$filename"
+}
+
+cmd_compress() {
+  need_kb
+  local filepath="${1:-}"
+  [[ -z "$filepath" && -f "$CURRENT_SESSION_FILE" ]] && filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  [[ -n "$filepath" ]] || die "No active session."
+  [[ -f "$filepath" ]] || die "File not found: $filepath"
+
+  echo ""
+  echo "Paste this into Claude to compress the session:"
+  echo "──────────────────────────────────────────────"
+  echo "Compress to ≤200 tokens. Keep frontmatter exactly."
+  echo "Replace body with:"
+  echo "  ## Summary (compressed)"
+  echo "  - Goal: [one sentence]"
+  echo "  - Key decisions: [list]"
+  echo "  - Outcome: [positive/negative + one sentence]"
+  echo "  - Lessons: [1-2 bullets]"
+  echo "  - _Full trace in git history._"
+  echo ""
+  cat "$filepath"
+}
+
+cmd_status() {
+  need_kb
+  echo "specman KB — $(git -C "$PROJECT_DIR" log --oneline -1 2>/dev/null || echo 'no commits')"
+  echo "Location : $KB_DIR"
+  echo ""
+  if [[ -f "$CURRENT_SESSION_FILE" ]]; then
+    echo "Active session: $(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')"
+  else
+    echo "Active session: none"
+  fi
+  echo ""
+  local s d f
+  s=$(find "$KB_DIR/sessions"  -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+  d=$(find "$KB_DIR/decisions" -name 'DEC-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  f=$(find "$KB_DIR/feedback"  -name 'FB-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  echo "Sessions: $s   Decisions: $d   Feedback: $f"
+  echo ""
+
+  local settings="$PROJECT_DIR/.claude/settings.json"
+  local enabled_hooks=()
+  grep -q "_stop-hook" "$settings" 2>/dev/null && enabled_hooks+=("stop")
+  for def in "${HOOK_DEFS[@]}"; do
+    local n; n=$(hook_name_from_def "$def")
+    hook_enabled "$n" && enabled_hooks+=("$n")
+  done
+  echo "Active hooks: ${enabled_hooks[*]:-none}"
+}
+
+# ─── Internal — Stop hook (called by Claude Code) ─────────────────────────────
+
+cmd_stop_hook() {
+  [[ -n "$KB_DIR" ]] || exit 0
+  [[ -f "$CURRENT_SESSION_FILE" ]] || exit 0
+
+  local session_path
+  session_path=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  [[ -f "$session_path" ]] || { rm -f "$CURRENT_SESSION_FILE"; exit 0; }
+
+  local status
+  status=$(grep '^status:' "$session_path" | head -1 | sed 's/status: *"\(.*\)"/\1/')
+  [[ "$status" == "in-progress" ]] || { rm -f "$CURRENT_SESSION_FILE"; exit 0; }
+
+  cd "$PROJECT_DIR"
+  local slug
+  slug=$(basename "$session_path" .md)
+  git add ".specman/sessions/$(basename "$session_path")" 2>/dev/null || true
+  git diff --cached --quiet || git commit -m "session: auto-save $slug" 2>/dev/null || true
+
+  local id date title index
+  id=$(grep '^id:' "$session_path" | head -1 | sed 's/id: *"\(.*\)"/\1/')
+  date=$(grep '^date:' "$session_path" | head -1 | sed 's/date: *"\(.*\)"/\1/')
+  title=$(grep '^# Session:' "$session_path" | head -1 | sed 's/# Session: *//')
+  index="$KB_DIR/meta/session-index.md"
+
+  if ! grep -q "$id" "$index" 2>/dev/null; then
+    echo "| $id | $date | auto-saved | ${title:-$slug} | .specman/sessions/$(basename "$session_path") |" >> "$index"
+    git add ".specman/meta/session-index.md" 2>/dev/null || true
+    git diff --cached --quiet || git commit -m "index: update session-index" 2>/dev/null || true
+  fi
+
+  rm -f "$CURRENT_SESSION_FILE"
+  exit 0
+}
+
+# ─── Dispatch ─────────────────────────────────────────────────────────────────
+
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+case "$CMD" in
+  init)        cmd_init "$@" ;;
+  eject)       cmd_eject "$@" ;;
+  session)
+    SUB="${1:-}"; shift 2>/dev/null || true
+    case "$SUB" in
+      new) cmd_session_new "$@" ;;
+      end) cmd_session_end "$@" ;;
+      *)   echo "Usage: sb session <new|end>" >&2; exit 1 ;;
+    esac ;;
+  decision)
+    SUB="${1:-}"; shift 2>/dev/null || true
+    case "$SUB" in
+      new) cmd_decision_new "$@" ;;
+      *)   echo "Usage: sb decision new <slug>" >&2; exit 1 ;;
+    esac ;;
+  feedback)
+    SUB="${1:-}"; shift 2>/dev/null || true
+    case "$SUB" in
+      new) cmd_feedback_new "$@" ;;
+      *)   echo "Usage: sb feedback new <slug>" >&2; exit 1 ;;
+    esac ;;
+  hooks)
+    SUB="${1:-}"; shift 2>/dev/null || true
+    case "$SUB" in
+      list)    cmd_hooks_list ;;
+      enable)  cmd_hooks_enable "$@" ;;
+      disable) cmd_hooks_disable "$@" ;;
+      *)       echo "Usage: sb hooks <list|enable|disable>" >&2; exit 1 ;;
+    esac ;;
+  compress)       cmd_compress "$@" ;;
+  status)         cmd_status ;;
+  _stop-hook)     cmd_stop_hook ;;
+  _hook-session-start) cmd_hook_session_start ;;
+  _hook-auto-session)  cmd_hook_auto_session ;;
+  _hook-guard)         cmd_hook_guard ;;
+  _hook-auto-stage)    cmd_hook_auto_stage ;;
+  _hook-pre-compact)   cmd_hook_pre_compact ;;
+  help|--help|-h)
+    cat << 'HELP'
+specman (sb) — AI session recorder & knowledge base
+
+Usage:
+  sb init                      Wire specman into current project
+  sb eject                     Remove specman from current project
+
+  sb session new <slug>        Start a session
+  sb session end               End active session
+  sb decision new <slug>       Create a decision record
+  sb feedback new <slug>       Create a feedback record
+  sb compress                  Print compression prompt for active session
+  sb status                    Show KB status + active hooks
+
+  sb hooks list                Show all available hooks and their status
+  sb hooks enable <name>       Add a hook to .claude/settings.json
+  sb hooks disable <name>      Remove a hook from .claude/settings.json
+
+Knowledge base lives in .specman/ inside your project repo.
+Shared with the team via git — new devs get full history on clone.
+HELP
+    ;;
+  *) echo "Unknown command: $CMD. Run 'sb help'." >&2; exit 1 ;;
+esac
