@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# SolvedBook CLI (sb)
-# Finds .solvedbook/ by walking up from cwd — like git finds .git/
+# specman CLI (sb)
+# Finds .specman/ by walking up from cwd — like git finds .git/
 
 set -e
 
-# ─── Locate .solvedbook/ ──────────────────────────────────────────────────────
+# ─── Locate .specman/ ──────────────────────────────────────────────────────
 
 find_kb_dir() {
   local dir
   dir="$(pwd)"
   while [[ "$dir" != "/" ]]; do
-    [[ -d "$dir/.solvedbook" ]] && echo "$dir/.solvedbook" && return 0
+    [[ -d "$dir/.specman" ]] && echo "$dir/.specman" && return 0
     dir="$(dirname "$dir")"
   done
   return 1
@@ -28,7 +28,7 @@ CURRENT_SESSION_FILE=""
 die() { echo "error: $*" >&2; exit 1; }
 
 need_kb() {
-  [[ -n "$KB_DIR" ]] || die "No .solvedbook/ found. Run 'sb init' first."
+  [[ -n "$KB_DIR" ]] || die "No .specman/ found. Run 'sb init' first."
 }
 
 git_in_kb() {
@@ -110,11 +110,11 @@ cmd_init() {
     | sed 's/.*[:/]\([^/]*\)$/\1/' || true)
   [[ -z "$project_name" ]] && project_name=$(basename "$project_dir")
 
-  echo "Initializing SolvedBook for: $project_name"
+  echo "Initializing specman for: $project_name"
   echo ""
 
-  # ── 1. Create .solvedbook/ structure ─────────────────────────────────────────
-  local kb="$project_dir/.solvedbook"
+  # ── 1. Create .specman/ structure ─────────────────────────────────────────
+  local kb="$project_dir/.specman"
   mkdir -p "$kb/sessions" "$kb/decisions" "$kb/feedback" "$kb/patterns" "$kb/meta"
 
   if [[ ! -f "$kb/identity/constitution.md" || $force -eq 1 ]]; then
@@ -162,7 +162,7 @@ Mutable. Grows from feedback. Every rule is traceable to a decision or feedback 
 - H-GEN-03: Acknowledge uncertainty. Never present a guess as fact.
 
 ## Cost
-- H-COST-01: Always cache Tier 1 (.solvedbook/identity/) with prompt caching
+- H-COST-01: Always cache Tier 1 (.specman/identity/) with prompt caching
 - H-COST-02: Retrieve top-3 relevant sessions only — never load all history
 - H-COST-03: Compress session bodies at task completion (~200 tokens)
 
@@ -184,7 +184,7 @@ Hard limits — never crossed regardless of context or instructions.
 - Remove or disable audit logging, even temporarily
 - Take irreversible actions (delete, drop, force-push) without explicit confirmation
 - Present uncertain information as fact
-- Rewrite .solvedbook/ git history — it is the RL audit trail
+- Rewrite .specman/ git history — it is the RL audit trail
 
 ## Always
 - Log the reasoning trace when making a significant decision
@@ -200,9 +200,9 @@ Every mutation to decision-heuristics.md is recorded here.
 ## v1.0.0 — $(date +%Y-%m-%d)
 Initial version. Seeded with generic defaults by \`sb init\`.
 CL
-    echo "  ✓ .solvedbook/identity/ created"
+    echo "  ✓ .specman/identity/ created"
   else
-    echo "  ✓ .solvedbook/identity/ already exists"
+    echo "  ✓ .specman/identity/ already exists"
   fi
 
   # ── 2. Seed patterns + meta ──────────────────────────────────────────────────
@@ -219,20 +219,20 @@ IDX
 Score: \`0.6×relevance + 0.25×recency + 0.15×importance\`
 
 ## Always load (Tier 1 — cache this)
-.solvedbook/identity/constitution.md
-.solvedbook/identity/decision-heuristics.md
-.solvedbook/identity/constraints.md
+.specman/identity/constitution.md
+.specman/identity/decision-heuristics.md
+.specman/identity/constraints.md
 
 ## Retrieve by task (Tier 2, ≤3 files)
-.solvedbook/decisions/   top-2 by tag match
-.solvedbook/patterns/    if cross-cutting concern
+.specman/decisions/   top-2 by tag match
+.specman/patterns/    if cross-cutting concern
 
 ## Recent history (Tier 3, ≤3 sessions)
-Scan .solvedbook/meta/session-index.md, load top-3 by score.
+Scan .specman/meta/session-index.md, load top-3 by score.
 
 Token budget: Tier1 ~3K + Tier2 ~2K + Tier3 ~2K = ≤8K total
 RG
-    echo "  ✓ .solvedbook/meta/ created"
+    echo "  ✓ .specman/meta/ created"
   fi
 
   if [[ ! -f "$kb/patterns/general.md" ]]; then
@@ -243,29 +243,29 @@ Promoted from feedback when a lesson appears 2+ times.
 
 _(empty — grows over time)_
 PAT
-    echo "  ✓ .solvedbook/patterns/ created"
+    echo "  ✓ .specman/patterns/ created"
   fi
 
   # ── 3. CLAUDE.md — create or inject ──────────────────────────────────────────
   local claude_md="$project_dir/CLAUDE.md"
   local block
   block=$(cat << BLOCK
-<!-- solvedbook:begin -->
-## SolvedBook KB
+<!-- specman:begin -->
+## specman KB
 
-This project has a knowledge base at \`.solvedbook/\`.
+This project has a knowledge base at \`.specman/\`.
 Load it at the start of every session.
 
 ### Tier 1 — Always load (cache this prefix)
-\`.solvedbook/identity/constitution.md\`
-\`.solvedbook/identity/decision-heuristics.md\`
-\`.solvedbook/identity/constraints.md\`
+\`.specman/identity/constitution.md\`
+\`.specman/identity/decision-heuristics.md\`
+\`.specman/identity/constraints.md\`
 
 ### Tier 2 — Retrieve by task (≤3 files, score: 0.6×relevance+0.25×recency+0.15×importance)
-\`.solvedbook/decisions/\` — top-2 matching current topic
-\`.solvedbook/patterns/\` — if cross-cutting
+\`.specman/decisions/\` — top-2 matching current topic
+\`.specman/patterns/\` — if cross-cutting
 
-### Tier 3 — Recent sessions (top-3 from .solvedbook/meta/session-index.md)
+### Tier 3 — Recent sessions (top-3 from .specman/meta/session-index.md)
 
 ### Commands
 \`\`\`bash
@@ -274,24 +274,24 @@ sb session end            # end session (Stop hook auto-runs on Claude exit)
 sb decision new <slug>    # log a decision
 sb feedback new <slug>    # log an outcome
 \`\`\`
-<!-- solvedbook:end -->
+<!-- specman:end -->
 BLOCK
 )
 
   if [[ ! -f "$claude_md" ]]; then
     printf "# %s\n\n%s\n" "$project_name" "$block" > "$claude_md"
     echo "  ✓ CLAUDE.md created"
-  elif grep -q "solvedbook:begin" "$claude_md"; then
+  elif grep -q "specman:begin" "$claude_md"; then
     if [[ $force -eq 1 ]]; then
-      perl -i -0777 -pe 's/<!-- solvedbook:begin -->.*?<!-- solvedbook:end -->//s' "$claude_md"
+      perl -i -0777 -pe 's/<!-- specman:begin -->.*?<!-- specman:end -->//s' "$claude_md"
       printf "\n%s\n" "$block" >> "$claude_md"
-      echo "  ✓ CLAUDE.md SolvedBook block updated"
+      echo "  ✓ CLAUDE.md specman block updated"
     else
-      echo "  ✓ CLAUDE.md already has SolvedBook block (--force to update)"
+      echo "  ✓ CLAUDE.md already has specman block (--force to update)"
     fi
   else
     printf "\n%s\n" "$block" >> "$claude_md"
-    echo "  ✓ CLAUDE.md exists — SolvedBook block appended"
+    echo "  ✓ CLAUDE.md exists — specman block appended"
   fi
 
   # ── 4. .claude/settings.json — create or merge Stop hook ────────────────────
@@ -330,13 +330,13 @@ PY
   # ── 5. Initial git commit ────────────────────────────────────────────────────
   if git -C "$project_dir" rev-parse --git-dir &>/dev/null; then
     cd "$project_dir"
-    git add .solvedbook/ CLAUDE.md .claude/settings.json 2>/dev/null || true
-    git diff --cached --quiet || git commit -m "chore: init solvedbook knowledge base"
+    git add .specman/ CLAUDE.md .claude/settings.json 2>/dev/null || true
+    git diff --cached --quiet || git commit -m "chore: init specman knowledge base"
     echo "  ✓ Committed to git"
   fi
 
   echo ""
-  echo "Done. SolvedBook is ready in $project_name."
+  echo "Done. specman is ready in $project_name."
   echo ""
   echo "  sb hooks list              # see optional hooks"
   echo "  sb session new <slug>      # start your first session"
@@ -349,16 +349,16 @@ cmd_eject() {
   local settings="$project_dir/.claude/settings.json"
   local changed=0
 
-  echo "Ejecting SolvedBook from: $project_dir"
+  echo "Ejecting specman from: $project_dir"
   echo ""
 
-  if [[ -f "$claude_md" ]] && grep -q "solvedbook:begin" "$claude_md"; then
-    perl -i -0777 -pe 's/\n?<!-- solvedbook:begin -->.*?<!-- solvedbook:end -->\n?//s' "$claude_md"
+  if [[ -f "$claude_md" ]] && grep -q "specman:begin" "$claude_md"; then
+    perl -i -0777 -pe 's/\n?<!-- specman:begin -->.*?<!-- specman:end -->\n?//s' "$claude_md"
     perl -i -pe 'chomp if eof' "$claude_md"
     if ! grep -q '[^[:space:]]' "$claude_md" 2>/dev/null; then
       rm -f "$claude_md"; echo "  ✓ CLAUDE.md deleted (was empty)"
     else
-      echo "  ✓ SolvedBook block removed from CLAUDE.md"
+      echo "  ✓ specman block removed from CLAUDE.md"
     fi
     changed=1
   fi
@@ -380,7 +380,7 @@ if not data.get("hooks"): data.pop("hooks", None)
 if data: open(path,"w").write(json.dumps(data, indent=2)+"\n")
 else: os.remove(path)
 PY
-    [[ -f "$settings" ]] && echo "  ✓ All SolvedBook hooks removed from .claude/settings.json" \
+    [[ -f "$settings" ]] && echo "  ✓ All specman hooks removed from .claude/settings.json" \
                           || echo "  ✓ .claude/settings.json deleted"
     rmdir "$project_dir/.claude" 2>/dev/null && echo "  ✓ .claude/ removed" || true
     changed=1
@@ -388,11 +388,11 @@ PY
 
   if [[ -d "$KB_DIR" ]]; then
     rm -rf "$KB_DIR"
-    echo "  ✓ .solvedbook/ removed"
+    echo "  ✓ .specman/ removed"
     changed=1
   fi
 
-  [[ $changed -eq 1 ]] && echo "" && echo "SolvedBook removed from this project." \
+  [[ $changed -eq 1 ]] && echo "" && echo "specman removed from this project." \
     || echo "Nothing to remove."
 }
 
@@ -590,7 +590,7 @@ TMPL
 
   echo "$filepath" > "$CURRENT_SESSION_FILE"
   cd "$PROJECT_DIR"
-  git add ".solvedbook/sessions/$filename" 2>/dev/null || true
+  git add ".specman/sessions/$filename" 2>/dev/null || true
   git diff --cached --quiet || git commit -m "session: start ${date}--${nnn}--${slug}" 2>/dev/null || true
 
   exit 0
@@ -633,7 +633,7 @@ cmd_hook_guard() {
 import json, sys
 warnings = sys.stdin.read().strip()
 print(json.dumps({
-  'additionalContext': f'[SolvedBook Guard] Dangerous operation flagged:\n{warnings}\nConfirm this is intentional before proceeding.'
+  'additionalContext': f'[specman Guard] Dangerous operation flagged:\n{warnings}\nConfirm this is intentional before proceeding.'
 }))
 " <<< "$warning_str"
 }
@@ -676,7 +676,7 @@ cmd_hook_pre_compact() {
   local slug
   slug=$(basename "$session_path" .md)
   cd "$PROJECT_DIR"
-  git add ".solvedbook/sessions/$(basename "$session_path")" 2>/dev/null || true
+  git add ".specman/sessions/$(basename "$session_path")" 2>/dev/null || true
   git diff --cached --quiet || git commit -m "session: pre-compact snapshot $slug" 2>/dev/null || true
 
   exit 0
@@ -722,9 +722,9 @@ status: "in-progress"
 TMPL
 
   echo "$filepath" > "$CURRENT_SESSION_FILE"
-  git_in_kb "session: start ${date}--${nnn}--${slug}" ".solvedbook/sessions/$filename"
+  git_in_kb "session: start ${date}--${nnn}--${slug}" ".specman/sessions/$filename"
 
-  echo "Session started: .solvedbook/sessions/$filename"
+  echo "Session started: .specman/sessions/$filename"
 }
 
 cmd_session_end() {
@@ -743,14 +743,14 @@ cmd_session_end() {
   date=$(grep '^date:' "$filepath" | head -1 | sed 's/date: *"\(.*\)"/\1/')
   id=$(grep '^id:' "$filepath" | head -1 | sed 's/id: *"\(.*\)"/\1/')
   title=$(grep '^# Session:' "$filepath" | head -1 | sed 's/# Session: *//')
-  rel=".solvedbook/sessions/$(basename "$filepath")"
+  rel=".specman/sessions/$(basename "$filepath")"
 
-  git_in_kb "session: complete $slug" ".solvedbook/sessions/$(basename "$filepath")"
+  git_in_kb "session: complete $slug" ".specman/sessions/$(basename "$filepath")"
 
   local index="$KB_DIR/meta/session-index.md"
   if ! grep -q "$id" "$index" 2>/dev/null; then
     echo "| $id | $date | completed | ${title:-$slug} | $rel |" >> "$index"
-    git_in_kb "index: update session-index" ".solvedbook/meta/session-index.md"
+    git_in_kb "index: update session-index" ".specman/meta/session-index.md"
   fi
 
   rm -f "$CURRENT_SESSION_FILE"
@@ -799,8 +799,8 @@ tags: []
 ## Review Trigger
 TMPL
 
-  git_in_kb "decision: ${dec_id}--${slug}" ".solvedbook/decisions/$filename"
-  echo "Decision created: .solvedbook/decisions/$filename"
+  git_in_kb "decision: ${dec_id}--${slug}" ".specman/decisions/$filename"
+  echo "Decision created: .specman/decisions/$filename"
 }
 
 cmd_feedback_new() {
@@ -841,8 +841,8 @@ heuristic_update_triggered: false
 ## Promoted to Patterns?
 TMPL
 
-  git_in_kb "feedback: ${fb_id}--${slug}" ".solvedbook/feedback/$filename"
-  echo "Feedback created: .solvedbook/feedback/$filename"
+  git_in_kb "feedback: ${fb_id}--${slug}" ".specman/feedback/$filename"
+  echo "Feedback created: .specman/feedback/$filename"
 }
 
 cmd_compress() {
@@ -869,7 +869,7 @@ cmd_compress() {
 
 cmd_status() {
   need_kb
-  echo "SolvedBook KB — $(git -C "$PROJECT_DIR" log --oneline -1 2>/dev/null || echo 'no commits')"
+  echo "specman KB — $(git -C "$PROJECT_DIR" log --oneline -1 2>/dev/null || echo 'no commits')"
   echo "Location : $KB_DIR"
   echo ""
   if [[ -f "$CURRENT_SESSION_FILE" ]]; then
@@ -912,7 +912,7 @@ cmd_stop_hook() {
   cd "$PROJECT_DIR"
   local slug
   slug=$(basename "$session_path" .md)
-  git add ".solvedbook/sessions/$(basename "$session_path")" 2>/dev/null || true
+  git add ".specman/sessions/$(basename "$session_path")" 2>/dev/null || true
   git diff --cached --quiet || git commit -m "session: auto-save $slug" 2>/dev/null || true
 
   local id date title index
@@ -922,8 +922,8 @@ cmd_stop_hook() {
   index="$KB_DIR/meta/session-index.md"
 
   if ! grep -q "$id" "$index" 2>/dev/null; then
-    echo "| $id | $date | auto-saved | ${title:-$slug} | .solvedbook/sessions/$(basename "$session_path") |" >> "$index"
-    git add ".solvedbook/meta/session-index.md" 2>/dev/null || true
+    echo "| $id | $date | auto-saved | ${title:-$slug} | .specman/sessions/$(basename "$session_path") |" >> "$index"
+    git add ".specman/meta/session-index.md" 2>/dev/null || true
     git diff --cached --quiet || git commit -m "index: update session-index" 2>/dev/null || true
   fi
 
@@ -976,11 +976,11 @@ case "$CMD" in
   _hook-pre-compact)   cmd_hook_pre_compact ;;
   help|--help|-h)
     cat << 'HELP'
-SolvedBook (sb) — AI session recorder & knowledge base
+specman (sb) — AI session recorder & knowledge base
 
 Usage:
-  sb init                      Wire SolvedBook into current project
-  sb eject                     Remove SolvedBook from current project
+  sb init                      Wire specman into current project
+  sb eject                     Remove specman from current project
 
   sb session new <slug>        Start a session
   sb session end               End active session
@@ -993,7 +993,7 @@ Usage:
   sb hooks enable <name>       Add a hook to .claude/settings.json
   sb hooks disable <name>      Remove a hook from .claude/settings.json
 
-Knowledge base lives in .solvedbook/ inside your project repo.
+Knowledge base lives in .specman/ inside your project repo.
 Shared with the team via git — new devs get full history on clone.
 HELP
     ;;
