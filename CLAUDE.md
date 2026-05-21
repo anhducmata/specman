@@ -1,5 +1,4 @@
 # specman
-
 <!-- specman:begin -->
 ## specman KB
 
