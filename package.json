@@ -15,18 +15,40 @@
     "url": "git@github.com:anhducmata/specman.git"
   },
   "license": "MIT",
+  "type": "module",
   "bin": {
-    "specman": "./bin/specman"
+    "specman": "./bin/specman",
+    "specman-ui": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.tsx",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cli": "bash tests/specman.sh"
   },
   "files": [
     "bin/specman",
+    "dist/",
     "README.md"
   ],
   "engines": {
-    "node": ">=14"
+    "node": ">=18"
   },
   "os": [
     "darwin",
     "linux"
-  ]
+  ],
+  "dependencies": {
+    "ink": "^5.0.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^18.3.1",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.7"
+  }
 }

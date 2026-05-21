@@ -85,8 +85,7 @@ HOOK_DEFS=(
 )
 
 hook_name_from_def() {
-  # Extract the internal command name → use as the hook identifier
-  echo "$1" | cut -d'|' -f3 | sed 's/^_hook-//'
+  echo "$1" | rev | cut -d'|' -f2 | rev | sed 's/^_hook-//'
 }
 
 hook_enabled() {
@@ -772,6 +771,7 @@ cmd_decision_new() {
 ---
 id: "${dec_id}"
 date: "${date}"
+slug: "${slug}"
 status: "proposed"
 tags: []
 ---
@@ -818,6 +818,7 @@ cmd_feedback_new() {
 ---
 id: "${fb_id}"
 date: "${date}"
+slug: "${slug}"
 outcome: "positive"
 references:
   decisions: []
@@ -974,6 +975,15 @@ case "$CMD" in
   _hook-guard)         cmd_hook_guard ;;
   _hook-auto-stage)    cmd_hook_auto_stage ;;
   _hook-pre-compact)   cmd_hook_pre_compact ;;
+  ui)
+    # Find the dist/cli.js relative to this script
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    UI_BIN="$SCRIPT_DIR/../dist/cli.js"
+    if [[ -f "$UI_BIN" ]]; then
+      exec node "$UI_BIN"
+    else
+      die "specman UI not built. Run: npm run build (in the specman package directory)"
+    fi ;;
   help|--help|-h)
     cat << 'HELP'
 specman — AI session recorder & knowledge base
@@ -981,6 +991,7 @@ specman — AI session recorder & knowledge base
 Usage:
   specman init                      Wire specman into current project
   specman eject                     Remove specman from current project
+  specman ui                        Open interactive TUI
 
   specman session new <slug>        Start a session
   specman session end               End active session
