@@ -1,6 +1,6 @@
 {
   "name": "specman",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "AI session recorder & knowledge base CLI for your project repo",
   "keywords": [
     "ai",
@@ -16,11 +16,9 @@
   },
   "license": "MIT",
   "bin": {
-    "sb": "./bin/sb",
     "specman": "./bin/specman"
   },
   "files": [
-    "bin/sb",
     "bin/specman",
     "README.md"
   ],

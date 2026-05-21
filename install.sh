@@ -8,7 +8,7 @@ REPO="https://raw.githubusercontent.com/anhducmata/specman/main"
 INSTALL_DIR="$HOME/.local/bin"
 BIN="$INSTALL_DIR/sb"
 
-echo "Installing SolvedBook..."
+echo "Installing Specman..."
 
 mkdir -p "$INSTALL_DIR"
 

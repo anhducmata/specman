@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# specman CLI (sb)
+# specman CLI
 # Finds .specman/ by walking up from cwd — like git finds .git/
 
 set -e
@@ -28,7 +28,7 @@ CURRENT_SESSION_FILE=""
 die() { echo "error: $*" >&2; exit 1; }
 
 need_kb() {
-  [[ -n "$KB_DIR" ]] || die "No .specman/ found. Run 'sb init' first."
+  [[ -n "$KB_DIR" ]] || die "No .specman/ found. Run 'specman init' first."
 }
 
 git_in_kb() {
@@ -198,7 +198,7 @@ CONSTR
 Every mutation to decision-heuristics.md is recorded here.
 
 ## v1.0.0 — $(date +%Y-%m-%d)
-Initial version. Seeded with generic defaults by \`sb init\`.
+Initial version. Seeded with generic defaults by \`specman init\`.
 CL
     echo "  ✓ .specman/identity/ created"
   else
@@ -269,10 +269,10 @@ Load it at the start of every session.
 
 ### Commands
 \`\`\`bash
-sb session new <slug>     # start session
-sb session end            # end session (Stop hook auto-runs on Claude exit)
-sb decision new <slug>    # log a decision
-sb feedback new <slug>    # log an outcome
+specman session new <slug>     # start session
+specman session end            # end session (Stop hook auto-runs on Claude exit)
+specman decision new <slug>    # log a decision
+specman feedback new <slug>    # log an outcome
 \`\`\`
 <!-- specman:end -->
 BLOCK
@@ -306,7 +306,7 @@ BLOCK
     "Stop": [
       {
         "matcher": "",
-        "hooks": [{"type": "command", "command": "sb _stop-hook"}]
+        "hooks": [{"type": "command", "command": "specman _stop-hook"}]
       }
     ]
   }
@@ -321,7 +321,7 @@ import sys, json
 path = sys.argv[1]
 with open(path) as f: data = json.load(f)
 data.setdefault("hooks", {}).setdefault("Stop", []).append(
-  {"matcher": "", "hooks": [{"type": "command", "command": "sb _stop-hook"}]})
+  {"matcher": "", "hooks": [{"type": "command", "command": "specman _stop-hook"}]})
 with open(path, "w") as f: json.dump(data, f, indent=2); f.write("\n")
 PY
     echo "  ✓ .claude/settings.json Stop hook appended"
@@ -338,8 +338,8 @@ PY
   echo ""
   echo "Done. specman is ready in $project_name."
   echo ""
-  echo "  sb hooks list              # see optional hooks"
-  echo "  sb session new <slug>      # start your first session"
+  echo "  specman hooks list              # see optional hooks"
+  echo "  specman session new <slug>      # start your first session"
 }
 
 cmd_eject() {
@@ -419,14 +419,14 @@ cmd_hooks_list() {
     printf "%-20s %-10s %s\n" "$name" "[$status]" "$desc"
   done
   echo ""
-  echo "  sb hooks enable <name>    # add hook to .claude/settings.json"
-  echo "  sb hooks disable <name>   # remove hook from .claude/settings.json"
+  echo "  specman hooks enable <name>    # add hook to .claude/settings.json"
+  echo "  specman hooks disable <name>   # remove hook from .claude/settings.json"
   echo ""
 }
 
 cmd_hooks_enable() {
   need_kb
-  local name="${1:?Usage: sb hooks enable <hook-name>}"
+  local name="${1:?Usage: specman hooks enable <hook-name>}"
   local settings="$PROJECT_DIR/.claude/settings.json"
 
   # Find the definition
@@ -436,7 +436,7 @@ cmd_hooks_enable() {
     n=$(hook_name_from_def "$def")
     [[ "$n" == "$name" ]] && matched_def="$def" && break
   done
-  [[ -n "$matched_def" ]] || die "Unknown hook: $name. Run 'sb hooks list' to see available hooks."
+  [[ -n "$matched_def" ]] || die "Unknown hook: $name. Run 'specman hooks list' to see available hooks."
 
   hook_enabled "$name" && echo "Hook '$name' is already enabled." && return 0
 
@@ -459,7 +459,7 @@ cmd_hooks_enable() {
   done
   cmd="${parts[$((n_parts-2))]}"
 
-  python3 - "$settings" "$event" "$matcher" "sb $cmd" << 'PY'
+  python3 - "$settings" "$event" "$matcher" "specman $cmd" << 'PY'
 import sys, json, os
 path, event, matcher, command = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 if os.path.exists(path):
@@ -476,7 +476,7 @@ PY
 
 cmd_hooks_disable() {
   need_kb
-  local name="${1:?Usage: sb hooks disable <hook-name>}"
+  local name="${1:?Usage: specman hooks disable <hook-name>}"
   local settings="$PROJECT_DIR/.claude/settings.json"
 
   [[ -f "$settings" ]] || { echo "Hook '$name' is not enabled."; return 0; }
@@ -686,7 +686,7 @@ cmd_hook_pre_compact() {
 
 cmd_session_new() {
   need_kb
-  local slug="${1:?Usage: sb session new <slug>}"
+  local slug="${1:?Usage: specman session new <slug>}"
   mkdir -p "$KB_DIR/sessions"
 
   local nnn date filename filepath
@@ -759,7 +759,7 @@ cmd_session_end() {
 
 cmd_decision_new() {
   need_kb
-  local slug="${1:?Usage: sb decision new <slug>}"
+  local slug="${1:?Usage: specman decision new <slug>}"
   mkdir -p "$KB_DIR/decisions"
 
   local dec_id date filename filepath
@@ -805,7 +805,7 @@ TMPL
 
 cmd_feedback_new() {
   need_kb
-  local slug="${1:?Usage: sb feedback new <slug>}"
+  local slug="${1:?Usage: specman feedback new <slug>}"
   mkdir -p "$KB_DIR/feedback"
 
   local fb_id date filename filepath
@@ -944,19 +944,19 @@ case "$CMD" in
     case "$SUB" in
       new) cmd_session_new "$@" ;;
       end) cmd_session_end "$@" ;;
-      *)   echo "Usage: sb session <new|end>" >&2; exit 1 ;;
+      *)   echo "Usage: specman session <new|end>" >&2; exit 1 ;;
     esac ;;
   decision)
     SUB="${1:-}"; shift 2>/dev/null || true
     case "$SUB" in
       new) cmd_decision_new "$@" ;;
-      *)   echo "Usage: sb decision new <slug>" >&2; exit 1 ;;
+      *)   echo "Usage: specman decision new <slug>" >&2; exit 1 ;;
     esac ;;
   feedback)
     SUB="${1:-}"; shift 2>/dev/null || true
     case "$SUB" in
       new) cmd_feedback_new "$@" ;;
-      *)   echo "Usage: sb feedback new <slug>" >&2; exit 1 ;;
+      *)   echo "Usage: specman feedback new <slug>" >&2; exit 1 ;;
     esac ;;
   hooks)
     SUB="${1:-}"; shift 2>/dev/null || true
@@ -964,7 +964,7 @@ case "$CMD" in
       list)    cmd_hooks_list ;;
       enable)  cmd_hooks_enable "$@" ;;
       disable) cmd_hooks_disable "$@" ;;
-      *)       echo "Usage: sb hooks <list|enable|disable>" >&2; exit 1 ;;
+      *)       echo "Usage: specman hooks <list|enable|disable>" >&2; exit 1 ;;
     esac ;;
   compress)       cmd_compress "$@" ;;
   status)         cmd_status ;;
@@ -976,26 +976,26 @@ case "$CMD" in
   _hook-pre-compact)   cmd_hook_pre_compact ;;
   help|--help|-h)
     cat << 'HELP'
-specman (sb) — AI session recorder & knowledge base
+specman — AI session recorder & knowledge base
 
 Usage:
-  sb init                      Wire specman into current project
-  sb eject                     Remove specman from current project
+  specman init                      Wire specman into current project
+  specman eject                     Remove specman from current project
 
-  sb session new <slug>        Start a session
-  sb session end               End active session
-  sb decision new <slug>       Create a decision record
-  sb feedback new <slug>       Create a feedback record
-  sb compress                  Print compression prompt for active session
-  sb status                    Show KB status + active hooks
+  specman session new <slug>        Start a session
+  specman session end               End active session
+  specman decision new <slug>       Create a decision record
+  specman feedback new <slug>       Create a feedback record
+  specman compress                  Print compression prompt for active session
+  specman status                    Show KB status + active hooks
 
-  sb hooks list                Show all available hooks and their status
-  sb hooks enable <name>       Add a hook to .claude/settings.json
-  sb hooks disable <name>      Remove a hook from .claude/settings.json
+  specman hooks list                Show all available hooks and their status
+  specman hooks enable <name>       Add a hook to .claude/settings.json
+  specman hooks disable <name>      Remove a hook from .claude/settings.json
 
 Knowledge base lives in .specman/ inside your project repo.
 Shared with the team via git — new devs get full history on clone.
 HELP
     ;;
-  *) echo "Unknown command: $CMD. Run 'sb help'." >&2; exit 1 ;;
+  *) echo "Unknown command: $CMD. Run 'specman help'." >&2; exit 1 ;;
 esac
