@@ -5,4 +5,4 @@ Filter by project + date, score by formula in `meta/retrieval-guide.md`.
 
 | ID | Date | Projects | Status | Title | File |
 |---|---|---|---|---|---|
-| _(no sessions yet)_ | | | | | |
+| 2026-05-21--001 | 2026-05-21 | ["permission-service"] | completed | [Short Title] | sessions/2026-05-21--001--test-cli-session.md |
