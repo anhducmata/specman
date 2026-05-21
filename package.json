@@ -10,7 +10,8 @@
   },
   "license": "MIT",
   "bin": {
-    "sb": "./bin/sb"
+    "sb": "./bin/sb",
+    "specman": "./bin/sb"
   },
   "files": [
     "bin/sb",
