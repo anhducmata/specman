@@ -1,0 +1,23 @@
+{
+  "name": "specman",
+  "version": "0.1.6",
+  "description": "AI session recorder & knowledge base CLI for your project repo",
+  "keywords": ["ai", "cli", "knowledge-base", "claude", "sessions"],
+  "homepage": "https://github.com/anhducmata/specman",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:anhducmata/specman.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "sb": "./bin/sb"
+  },
+  "files": [
+    "bin/sb",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "os": ["darwin", "linux"]
+}
