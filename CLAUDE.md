@@ -18,9 +18,9 @@ Load it at the start of every session.
 
 ### Commands
 ```bash
-sb session new <slug>     # start session
-sb session end            # end session (Stop hook auto-runs on Claude exit)
-sb decision new <slug>    # log a decision
-sb feedback new <slug>    # log an outcome
+specman session new <slug>     # start session
+specman session end            # end session (Stop hook auto-runs on Claude exit)
+specman decision new <slug>    # log a decision
+specman feedback new <slug>    # log an outcome
 ```
 <!-- specman:end -->

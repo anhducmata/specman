@@ -3,7 +3,7 @@
     "Stop": [
       {
         "matcher": "",
-        "hooks": [{"type": "command", "command": "sb _stop-hook"}]
+        "hooks": [{"type": "command", "command": "specman _stop-hook"}]
       }
     ]
   }
