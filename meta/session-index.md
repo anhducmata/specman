@@ -1,9 +1,14 @@
 # Session Index
 
-Running index of all sessions. Used for Tier 3 retrieval.
-Filter by project + date, score by formula in `meta/retrieval-guide.md`.
+Sessions are stored per-project: `projects/{name}/sessions/`
+Each project has its own `projects/{name}/session-index.md`.
 
-| ID | Date | Projects | Status | Title | File |
-|---|---|---|---|---|---|
-| 2026-05-21--001 | 2026-05-21 | ["permission-service"] | completed | [Short Title] | sessions/2026-05-21--001--test-cli-session.md |
-| 2026-05-21--002 | 2026-05-21 | ["query-gateway"] | auto-saved | [Short Title] | sessions/2026-05-21--002--hook-test.md |
+This file is a global pointer — scan project folders directly for retrieval.
+
+## Projects
+
+| Project | Sessions | Index |
+|---|---|---|
+| permission-service | `projects/permission-service/sessions/` | `projects/permission-service/session-index.md` |
+| query-gateway | `projects/query-gateway/sessions/` | `projects/query-gateway/session-index.md` |
+| goauthentik | `projects/goauthentik/sessions/` | `projects/goauthentik/session-index.md` |

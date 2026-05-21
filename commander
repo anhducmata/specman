@@ -251,72 +251,62 @@ PY
 }
 
 cmd_session_new() {
-  local slug="${1:?Usage: commander session new <slug> [project1 project2 ...]}"
-  shift
-  local projects=("$@")
+  local slug="${1:?Usage: commander session new <slug> <project>}"
+  local project="${2:?Usage: commander session new <slug> <project>}"
 
-  local nnn
-  nnn=$(next_session_id)
-  local date
+  local proj_dir="$COMMANDER_DIR/projects/$project"
+  [[ -d "$proj_dir" ]] || die "Project '$project' not found. Run 'commander init' in that project first."
+  mkdir -p "$proj_dir/sessions"
+
+  local nnn date filename filepath
+  nnn=$(next_session_id "$project")
   date=$(date +%Y-%m-%d)
-  local filename="${date}--${nnn}--${slug}.md"
-  local filepath="$COMMANDER_DIR/sessions/$filename"
-  local projects_yaml
-  projects_yaml=$(projects_array_yaml "${projects[@]}")
+  filename="${date}--${nnn}--${slug}.md"
+  filepath="$proj_dir/sessions/$filename"
 
-  # Copy template and fill placeholders
   sed \
     -e "s|YYYY-MM-DD--NNN|${date}--${nnn}|g" \
     -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
-    -e "s|projects: \[\]|projects: ${projects_yaml}|g" \
-    "$COMMANDER_DIR/sessions/_template.md" > "$filepath"
+    -e "s|projects: \[\]|projects: [\"${project}\"]|g" \
+    "$COMMANDER_DIR/templates/session.md" > "$filepath"
 
-  # Write current-session pointer
   echo "$filepath" > "$CURRENT_SESSION_FILE"
+  git_commit "session: start $project/${date}--${nnn}--${slug}" "$filepath"
 
-  git_commit "session: start ${date}--${nnn}--${slug}" "$filepath"
-
-  echo "Session started: sessions/$filename"
+  echo "Session started: projects/$project/sessions/$filename"
   echo "Tip: fill in Context and Goal now, then work."
 }
 
 cmd_session_end() {
   local filepath="${1:-}"
 
-  # Fall back to current-session pointer
   if [[ -z "$filepath" ]]; then
     [[ -f "$CURRENT_SESSION_FILE" ]] || die "No active session. Pass a file path explicitly."
     filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
   fi
-
   [[ -f "$filepath" ]] || die "Session file not found: $filepath"
 
-  # Update status to completed
   sed -i '' 's/status: "in-progress"/status: "completed"/' "$filepath"
 
-  SLUG=$(basename "$filepath" .md)
-  git_commit "session: complete $SLUG" "$filepath"
-
-  # Update session-index.md
-  local date id projects title
+  local slug date id title rel_path
+  slug=$(basename "$filepath" .md)
   date=$(grep '^date:' "$filepath" | head -1 | sed 's/date: *"\(.*\)"/\1/')
   id=$(grep '^id:' "$filepath" | head -1 | sed 's/id: *"\(.*\)"/\1/')
-  projects=$(grep '^projects:' "$filepath" | head -1 | sed 's/projects: *//')
   title=$(grep '^# Session:' "$filepath" | head -1 | sed 's/# Session: *//')
-  local rel_path="${filepath#$COMMANDER_DIR/}"
+  rel_path="${filepath#$COMMANDER_DIR/}"
 
-  local index="$COMMANDER_DIR/meta/session-index.md"
-  if ! grep -q "$id" "$index" 2>/dev/null; then
-    # Replace the "no sessions yet" placeholder if present
-    if grep -q "no sessions yet" "$index"; then
-      sed -i '' '/no sessions yet/d' "$index"
-    fi
-    echo "| $id | $date | $projects | completed | ${title:-untitled} | $rel_path |" >> "$index"
-    git_commit "index: update session-index" "$index"
-  else
-    # Update existing row status
-    sed -i '' "s/| $id |.*| auto-saved |/| $id | $date | $projects | completed |/" "$index"
-    git_commit "index: update session-index" "$index"
+  git_commit "session: complete $slug" "$filepath"
+
+  # Update project-local session index (simple append)
+  local proj_dir
+  proj_dir="$(dirname "$(dirname "$filepath")")"
+  local index="$proj_dir/session-index.md"
+  if [[ ! -f "$index" ]]; then
+    printf "# Session Index\n\n| ID | Date | Status | Title | File |\n|---|---|---|---|---|\n" > "$index"
+  fi
+  if ! grep -q "$id" "$index"; then
+    echo "| $id | $date | completed | ${title:-untitled} | $rel_path |" >> "$index"
+    git_commit "index: update $proj_dir/session-index" "$index"
   fi
 
   rm -f "$CURRENT_SESSION_FILE"
@@ -325,54 +315,53 @@ cmd_session_end() {
 }
 
 cmd_decision_new() {
-  local slug="${1:?Usage: commander decision new <slug> [project1 project2 ...]}"
-  shift
-  local projects=("$@")
+  local slug="${1:?Usage: commander decision new <slug> <project>}"
+  local project="${2:?Usage: commander decision new <slug> <project>}"
 
-  local dec_id
-  dec_id=$(next_decision_id)
-  local date
+  local proj_dir="$COMMANDER_DIR/projects/$project"
+  [[ -d "$proj_dir" ]] || die "Project '$project' not found. Run 'commander init' in that project first."
+  mkdir -p "$proj_dir/decisions"
+
+  local dec_id date filename filepath
+  dec_id=$(next_decision_id "$project")
   date=$(date +%Y-%m-%d)
-  local filename="${dec_id}--${slug}.md"
-  local filepath="$COMMANDER_DIR/decisions/$filename"
-  local projects_yaml
-  projects_yaml=$(projects_array_yaml "${projects[@]}")
+  filename="${dec_id}--${slug}.md"
+  filepath="$proj_dir/decisions/$filename"
 
   sed \
     -e "s|DEC-NNN|${dec_id}|g" \
     -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
-    -e "s|projects: \[\]|projects: ${projects_yaml}|g" \
-    "$COMMANDER_DIR/decisions/_template.md" > "$filepath"
+    -e "s|projects: \[\]|projects: [\"${project}\"]|g" \
+    "$COMMANDER_DIR/templates/decision.md" > "$filepath"
 
-  git_commit "decision: ${dec_id}--${slug}" "$filepath"
+  git_commit "decision: $project/${dec_id}--${slug}" "$filepath"
 
-  # Append to decision-index.md
-  local index="$COMMANDER_DIR/meta/decision-index.md"
-  echo "| $dec_id | $date | proposed | $projects_yaml | | ${slug} |" >> "$index"
-  git_commit "index: update decision-index" "$index"
-
-  echo "Decision created: decisions/$filename"
+  echo "Decision created: projects/$project/decisions/$filename"
   echo "Fill in Context, Options, Decision, Rationale."
 }
 
 cmd_feedback_new() {
-  local slug="${1:?Usage: commander feedback new <slug>}"
+  local slug="${1:?Usage: commander feedback new <slug> <project>}"
+  local project="${2:?Usage: commander feedback new <slug> <project>}"
 
-  local fb_id
-  fb_id=$(next_feedback_id)
-  local date
+  local proj_dir="$COMMANDER_DIR/projects/$project"
+  [[ -d "$proj_dir" ]] || die "Project '$project' not found. Run 'commander init' in that project first."
+  mkdir -p "$proj_dir/feedback"
+
+  local fb_id date filename filepath
+  fb_id=$(next_feedback_id "$project")
   date=$(date +%Y-%m-%d)
-  local filename="${fb_id}--${slug}.md"
-  local filepath="$COMMANDER_DIR/feedback/$filename"
+  filename="${fb_id}--${slug}.md"
+  filepath="$proj_dir/feedback/$filename"
 
   sed \
     -e "s|FB-NNN|${fb_id}|g" \
     -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
-    "$COMMANDER_DIR/feedback/_template.md" > "$filepath"
+    "$COMMANDER_DIR/templates/feedback.md" > "$filepath"
 
-  git_commit "feedback: ${fb_id}--${slug}" "$filepath"
+  git_commit "feedback: $project/${fb_id}--${slug}" "$filepath"
 
-  echo "Feedback created: feedback/$filename"
+  echo "Feedback created: projects/$project/feedback/$filename"
   echo "Fill in What Was Expected, What Actually Happened, Lessons."
 }
 
@@ -516,9 +505,16 @@ cmd_status() {
     echo "Active session: none"
   fi
   echo ""
-  echo "Sessions : $(find "$COMMANDER_DIR/sessions" -name '*.md' ! -name '_template.md' | wc -l | tr -d ' ')"
-  echo "Decisions: $(find "$COMMANDER_DIR/decisions" -name 'DEC-*.md' | wc -l | tr -d ' ')"
-  echo "Feedback : $(find "$COMMANDER_DIR/feedback" -name 'FB-*.md' | wc -l | tr -d ' ')"
+  echo "Projects:"
+  for proj in "$COMMANDER_DIR/projects"/*/; do
+    [[ "$(basename "$proj")" == "_template" ]] && continue
+    local name sessions decisions feedback
+    name=$(basename "$proj")
+    sessions=$(find "$proj/sessions" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+    decisions=$(find "$proj/decisions" -name 'DEC-*.md' 2>/dev/null | wc -l | tr -d ' ')
+    feedback=$(find "$proj/feedback" -name 'FB-*.md' 2>/dev/null | wc -l | tr -d ' ')
+    printf "  %-30s  sessions:%-4s decisions:%-4s feedback:%s\n" "$name" "$sessions" "$decisions" "$feedback"
+  done
 }
 
 # ─── Dispatch ─────────────────────────────────────────────────────────────────
@@ -542,14 +538,14 @@ case "$CMD" in
     SUBCMD="${1:-}"; shift 2>/dev/null || true
     case "$SUBCMD" in
       new) cmd_decision_new "$@" ;;
-      *) echo "Usage: commander decision new <slug> [projects...]" >&2; exit 1 ;;
+      *) echo "Usage: commander decision new <slug> <project>" >&2; exit 1 ;;
     esac
     ;;
   feedback)
     SUBCMD="${1:-}"; shift 2>/dev/null || true
     case "$SUBCMD" in
       new) cmd_feedback_new "$@" ;;
-      *) echo "Usage: commander feedback new <slug>" >&2; exit 1 ;;
+      *) echo "Usage: commander feedback new <slug> <project>" >&2; exit 1 ;;
     esac
     ;;
   compress)
@@ -580,8 +576,9 @@ Examples:
   commander eject
   commander session new fix-cache-bug permission-service
   commander session end
-  commander decision new versioned-cache-keys permission-service
-  commander feedback new cache-invalidation-outcome
+  commander decision new use-versioned-keys permission-service
+  commander feedback new cache-fix-worked permission-service
+  commander status
 HELP
     ;;
   *)
