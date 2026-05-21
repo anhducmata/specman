@@ -1,0 +1,403 @@
+#!/usr/bin/env bash
+# Commander CLI
+# Usage: commander <command> [subcommand] [args...]
+
+set -e
+
+COMMANDER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$COMMANDER_DIR/scripts/lib/ids.sh"
+
+CURRENT_SESSION_FILE="$COMMANDER_DIR/.claude/current-session"
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+die() { echo "error: $*" >&2; exit 1; }
+
+git_commit() {
+  local msg="$1"; shift
+  cd "$COMMANDER_DIR"
+  git add "$@" 2>/dev/null || true
+  git diff --cached --quiet || git commit -m "$msg"
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_init() {
+  local force=0
+  [[ "${1:-}" == "--force" ]] && force=1
+
+  echo "Initializing Commander..."
+
+  # CLAUDE.md
+  local claude_md="$COMMANDER_DIR/CLAUDE.md"
+  if [[ -f "$claude_md" && $force -eq 0 ]]; then
+    echo "  CLAUDE.md already exists (use --force to overwrite)"
+  else
+    cat > "$claude_md" << 'CLAUDEMD'
+# Commander KB — Bootstrap
+
+This repo is an AI knowledge base. Load it at the start of every session.
+
+## Phase 1 — Always Load (Tier 1, ~3K tokens) — CACHE THIS PREFIX
+
+```
+identity/constitution.md
+identity/decision-heuristics.md
+identity/constraints.md
+```
+
+Place a prompt cache breakpoint after these three files.
+Cost impact: 90% reduction on Tier 1 tokens across repeated sessions.
+
+## Phase 2 — Retrieve by Project (Tier 2, ≤ 3 files)
+
+Score candidates: `score = 0.6×relevance + 0.25×recency + 0.15×importance`
+
+Always retrieve:
+- `projects/{current-project}/gotchas.md`
+
+If unfamiliar with project:
+- `projects/{current-project}/overview.md`
+- `projects/{current-project}/architecture.md`
+
+If architecture decision involved — top-2 by tag match:
+- `decisions/DEC-NNN--*.md`
+
+For security/auth work:
+- `patterns/security-patterns.md`
+
+## Phase 3 — Recent Sessions (Tier 3, ≤ 3 sessions)
+
+1. Open `meta/session-index.md`
+2. Filter by current project + last 30 days
+3. Load top-3 by score formula above
+
+## Token Budget
+
+| Tier | Tokens | When |
+|------|--------|------|
+| 1 — Core | ~3K | Always |
+| 2 — Semantic | ~2K | Selective |
+| 3 — Episodic | ~2K | Selective |
+| **Total** | **≤8K** | **Target** |
+
+## Session Workflow
+
+```bash
+# Start of session
+commander session new <slug> [project1 project2 ...]
+
+# End of session (Stop hook auto-runs this if you forget)
+commander session end
+```
+
+## Key Rules
+
+- Always cache Tier 1 prefix (see `ai-systems/claude.md` for API snippet)
+- Compress session body before ending: `commander compress`
+- Never rewrite git history — it is the RL audit trail
+- Significant decisions → `commander decision new <slug>`
+- Observed outcomes → `commander feedback new <slug>`
+CLAUDEMD
+    echo "  ✓ CLAUDE.md written"
+  fi
+
+  # .claude/settings.json
+  local settings="$COMMANDER_DIR/.claude/settings.json"
+  if [[ -f "$settings" && $force -eq 0 ]]; then
+    echo "  .claude/settings.json already exists (use --force to overwrite)"
+  else
+    mkdir -p "$COMMANDER_DIR/.claude"
+    cat > "$settings" << 'JSON'
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/hooks/on-stop.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+JSON
+    echo "  ✓ .claude/settings.json written (Stop hook configured)"
+  fi
+
+  # Make scripts executable
+  chmod +x "$COMMANDER_DIR/commander"
+  chmod +x "$COMMANDER_DIR/scripts/hooks/on-stop.sh"
+  chmod +x "$COMMANDER_DIR/scripts/log-session.sh"
+  chmod +x "$COMMANDER_DIR/scripts/compress-session.sh"
+  echo "  ✓ Scripts made executable"
+
+  # Codex scaffolding in ai-systems/codex.md
+  local codex_md="$COMMANDER_DIR/ai-systems/codex.md"
+  if ! grep -q "System Prompt Template" "$codex_md" 2>/dev/null; then
+    cat >> "$codex_md" << 'CODEX'
+
+## System Prompt Template
+
+Codex has no hook system. Paste this block at the start of every Codex session:
+
+---
+You are working in a project with a Commander knowledge base.
+Before starting, read these files in order:
+1. identity/constitution.md
+2. identity/decision-heuristics.md
+3. identity/constraints.md
+4. projects/{current-project}/gotchas.md
+5. (optional) last 3 sessions from meta/session-index.md
+
+At session start, run: commander session new <slug> <project>
+At session end, run:   commander session end
+---
+CODEX
+    echo "  ✓ Codex system prompt template added to ai-systems/codex.md"
+  fi
+
+  echo ""
+  echo "Commander initialized. Get started:"
+  echo "  commander session new <slug> [project...]"
+}
+
+cmd_session_new() {
+  local slug="${1:?Usage: commander session new <slug> [project1 project2 ...]}"
+  shift
+  local projects=("$@")
+
+  local nnn
+  nnn=$(next_session_id)
+  local date
+  date=$(date +%Y-%m-%d)
+  local filename="${date}--${nnn}--${slug}.md"
+  local filepath="$COMMANDER_DIR/sessions/$filename"
+  local projects_yaml
+  projects_yaml=$(projects_array_yaml "${projects[@]}")
+
+  # Copy template and fill placeholders
+  sed \
+    -e "s|YYYY-MM-DD--NNN|${date}--${nnn}|g" \
+    -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
+    -e "s|projects: \[\]|projects: ${projects_yaml}|g" \
+    "$COMMANDER_DIR/sessions/_template.md" > "$filepath"
+
+  # Write current-session pointer
+  echo "$filepath" > "$CURRENT_SESSION_FILE"
+
+  git_commit "session: start ${date}--${nnn}--${slug}" "$filepath"
+
+  echo "Session started: sessions/$filename"
+  echo "Tip: fill in Context and Goal now, then work."
+}
+
+cmd_session_end() {
+  local filepath="${1:-}"
+
+  # Fall back to current-session pointer
+  if [[ -z "$filepath" ]]; then
+    [[ -f "$CURRENT_SESSION_FILE" ]] || die "No active session. Pass a file path explicitly."
+    filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  fi
+
+  [[ -f "$filepath" ]] || die "Session file not found: $filepath"
+
+  # Update status to completed
+  sed -i '' 's/status: "in-progress"/status: "completed"/' "$filepath"
+
+  SLUG=$(basename "$filepath" .md)
+  git_commit "session: complete $SLUG" "$filepath"
+
+  # Update session-index.md
+  local date id projects title
+  date=$(grep '^date:' "$filepath" | head -1 | sed 's/date: *"\(.*\)"/\1/')
+  id=$(grep '^id:' "$filepath" | head -1 | sed 's/id: *"\(.*\)"/\1/')
+  projects=$(grep '^projects:' "$filepath" | head -1 | sed 's/projects: *//')
+  title=$(grep '^# Session:' "$filepath" | head -1 | sed 's/# Session: *//')
+  local rel_path="${filepath#$COMMANDER_DIR/}"
+
+  local index="$COMMANDER_DIR/meta/session-index.md"
+  if ! grep -q "$id" "$index" 2>/dev/null; then
+    # Replace the "no sessions yet" placeholder if present
+    if grep -q "no sessions yet" "$index"; then
+      sed -i '' '/no sessions yet/d' "$index"
+    fi
+    echo "| $id | $date | $projects | completed | ${title:-untitled} | $rel_path |" >> "$index"
+    git_commit "index: update session-index" "$index"
+  else
+    # Update existing row status
+    sed -i '' "s/| $id |.*| auto-saved |/| $id | $date | $projects | completed |/" "$index"
+    git_commit "index: update session-index" "$index"
+  fi
+
+  rm -f "$CURRENT_SESSION_FILE"
+  echo "Session completed: $rel_path"
+  echo "Tip: run 'commander compress $filepath' to summarize the body."
+}
+
+cmd_decision_new() {
+  local slug="${1:?Usage: commander decision new <slug> [project1 project2 ...]}"
+  shift
+  local projects=("$@")
+
+  local dec_id
+  dec_id=$(next_decision_id)
+  local date
+  date=$(date +%Y-%m-%d)
+  local filename="${dec_id}--${slug}.md"
+  local filepath="$COMMANDER_DIR/decisions/$filename"
+  local projects_yaml
+  projects_yaml=$(projects_array_yaml "${projects[@]}")
+
+  sed \
+    -e "s|DEC-NNN|${dec_id}|g" \
+    -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
+    -e "s|projects: \[\]|projects: ${projects_yaml}|g" \
+    "$COMMANDER_DIR/decisions/_template.md" > "$filepath"
+
+  git_commit "decision: ${dec_id}--${slug}" "$filepath"
+
+  # Append to decision-index.md
+  local index="$COMMANDER_DIR/meta/decision-index.md"
+  echo "| $dec_id | $date | proposed | $projects_yaml | | ${slug} |" >> "$index"
+  git_commit "index: update decision-index" "$index"
+
+  echo "Decision created: decisions/$filename"
+  echo "Fill in Context, Options, Decision, Rationale."
+}
+
+cmd_feedback_new() {
+  local slug="${1:?Usage: commander feedback new <slug>}"
+
+  local fb_id
+  fb_id=$(next_feedback_id)
+  local date
+  date=$(date +%Y-%m-%d)
+  local filename="${fb_id}--${slug}.md"
+  local filepath="$COMMANDER_DIR/feedback/$filename"
+
+  sed \
+    -e "s|FB-NNN|${fb_id}|g" \
+    -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
+    "$COMMANDER_DIR/feedback/_template.md" > "$filepath"
+
+  git_commit "feedback: ${fb_id}--${slug}" "$filepath"
+
+  echo "Feedback created: feedback/$filename"
+  echo "Fill in What Was Expected, What Actually Happened, Lessons."
+}
+
+cmd_compress() {
+  local filepath="${1:-}"
+  if [[ -z "$filepath" && -f "$CURRENT_SESSION_FILE" ]]; then
+    filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  fi
+  [[ -n "$filepath" ]] || die "No active session and no file specified."
+  [[ -f "$filepath" ]] || die "File not found: $filepath"
+
+  echo ""
+  echo "──────────────────────────────────────────────────"
+  echo "Paste this into Claude to compress the session:"
+  echo "──────────────────────────────────────────────────"
+  echo ""
+  echo "Compress the following session log body to ≤200 tokens."
+  echo "Keep the frontmatter (---...---) exactly as-is."
+  echo "Replace everything after the frontmatter with:"
+  echo ""
+  echo "  ## Summary (compressed)"
+  echo "  - Goal: [one sentence]"
+  echo "  - Key decisions: [DEC refs or inline]"
+  echo "  - Outcome: [positive/negative/mixed + one sentence]"
+  echo "  - Lessons: [1–2 bullets]"
+  echo "  - _Full reasoning trace in git history._"
+  echo ""
+  echo "Session file contents:"
+  echo "──────────────────────────────────────────────────"
+  cat "$filepath"
+  echo ""
+  echo "──────────────────────────────────────────────────"
+}
+
+cmd_status() {
+  echo "Commander KB — $(git -C "$COMMANDER_DIR" log --oneline -1 2>/dev/null || echo 'no commits')"
+  echo ""
+  if [[ -f "$CURRENT_SESSION_FILE" ]]; then
+    local f
+    f=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+    echo "Active session: $f"
+  else
+    echo "Active session: none"
+  fi
+  echo ""
+  echo "Sessions : $(find "$COMMANDER_DIR/sessions" -name '*.md' ! -name '_template.md' | wc -l | tr -d ' ')"
+  echo "Decisions: $(find "$COMMANDER_DIR/decisions" -name 'DEC-*.md' | wc -l | tr -d ' ')"
+  echo "Feedback : $(find "$COMMANDER_DIR/feedback" -name 'FB-*.md' | wc -l | tr -d ' ')"
+}
+
+# ─── Dispatch ─────────────────────────────────────────────────────────────────
+
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+case "$CMD" in
+  init)
+    cmd_init "$@"
+    ;;
+  session)
+    SUBCMD="${1:-}"; shift 2>/dev/null || true
+    case "$SUBCMD" in
+      new) cmd_session_new "$@" ;;
+      end) cmd_session_end "$@" ;;
+      *) echo "Usage: commander session <new|end>" >&2; exit 1 ;;
+    esac
+    ;;
+  decision)
+    SUBCMD="${1:-}"; shift 2>/dev/null || true
+    case "$SUBCMD" in
+      new) cmd_decision_new "$@" ;;
+      *) echo "Usage: commander decision new <slug> [projects...]" >&2; exit 1 ;;
+    esac
+    ;;
+  feedback)
+    SUBCMD="${1:-}"; shift 2>/dev/null || true
+    case "$SUBCMD" in
+      new) cmd_feedback_new "$@" ;;
+      *) echo "Usage: commander feedback new <slug>" >&2; exit 1 ;;
+    esac
+    ;;
+  compress)
+    cmd_compress "$@"
+    ;;
+  status)
+    cmd_status
+    ;;
+  help|--help|-h)
+    cat << 'HELP'
+Commander — AI knowledge base CLI
+
+Usage:
+  commander init                              Set up CLAUDE.md + Claude Code hooks
+  commander session new <slug> [proj...]      Start a session
+  commander session end [file]                End active session
+  commander decision new <slug> [proj...]     Create a decision record (DEC-NNN)
+  commander feedback new <slug>               Create a feedback record (FB-NNN)
+  commander compress [file]                   Print compression prompt for a session
+  commander status                            Show KB status
+
+Examples:
+  commander init
+  commander session new fix-cache-bug permission-service
+  commander session end
+  commander decision new versioned-cache-keys permission-service
+  commander feedback new cache-invalidation-outcome
+HELP
+    ;;
+  *)
+    echo "Unknown command: $CMD. Run 'commander help'." >&2
+    exit 1
+    ;;
+esac
