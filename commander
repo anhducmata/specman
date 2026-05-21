@@ -7,7 +7,13 @@ set -e
 COMMANDER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$COMMANDER_DIR/scripts/lib/ids.sh"
 
-CURRENT_SESSION_FILE="$COMMANDER_DIR/.claude/current-session"
+# current-session pointer lives in the user's project .claude/ dir (where the hook fires)
+# Fall back to COMMANDER_DIR if not in a project
+if [[ -f "$(pwd)/.claude/current-session" || -d "$(pwd)/.claude" ]]; then
+  CURRENT_SESSION_FILE="$(pwd)/.claude/current-session"
+else
+  CURRENT_SESSION_FILE="$COMMANDER_DIR/.claude/current-session"
+fi
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -26,51 +32,124 @@ cmd_init() {
   local force=0
   [[ "${1:-}" == "--force" ]] && force=1
 
-  echo "Initializing Commander..."
+  # init runs in the USER'S PROJECT directory, not in commander itself
+  local project_dir
+  project_dir="$(pwd)"
 
-  # CLAUDE.md
-  local claude_md="$COMMANDER_DIR/CLAUDE.md"
+  # Detect project name from git remote, then folder name
+  local project_name
+  project_name=$(git -C "$project_dir" remote get-url origin 2>/dev/null \
+    | sed 's/.*[:/]\([^/]*\)\.git$/\1/' \
+    | sed 's/.*[:/]\([^/]*\)$/\1/' \
+    || true)
+  [[ -z "$project_name" ]] && project_name=$(basename "$project_dir")
+
+  echo "Initializing Commander for project: $project_name"
+  echo "  Project dir : $project_dir"
+  echo "  Commander KB: $COMMANDER_DIR"
+  echo ""
+
+  # ── 1. Create project folder in KB ──────────────────────────────────────────
+  local proj_dir="$COMMANDER_DIR/projects/$project_name"
+  if [[ ! -d "$proj_dir" ]]; then
+    mkdir -p "$proj_dir"
+    # Scaffold empty project files
+    cat > "$proj_dir/overview.md" << OVERVIEW
+# $project_name — Overview
+
+**Language:**
+**Purpose:**
+
+## What It Does
+
+## Key APIs / Entry Points
+
+## Tech Stack
+OVERVIEW
+
+    cat > "$proj_dir/gotchas.md" << GOTCHAS
+# $project_name — Gotchas
+
+Known sharp edges and non-obvious behaviors.
+Add an entry any time something surprises you.
+
+---
+
+_(no gotchas recorded yet)_
+GOTCHAS
+
+    cat > "$proj_dir/architecture.md" << ARCH
+# $project_name — Architecture
+
+## Core Design
+
+## Key Decisions
+
+## Request / Data Flow
+ARCH
+
+    cat > "$proj_dir/open-questions.md" << OQ
+# $project_name — Open Questions
+
+Unresolved design problems. Remove when resolved (move answer to architecture.md).
+
+---
+
+_(no open questions yet)_
+OQ
+
+    # Commit new project folder to commander KB
+    git_commit "project: init $project_name" \
+      "$proj_dir/overview.md" \
+      "$proj_dir/gotchas.md" \
+      "$proj_dir/architecture.md" \
+      "$proj_dir/open-questions.md"
+
+    echo "  ✓ Created ~/.commander/projects/$project_name/"
+  else
+    echo "  ✓ Project already exists in KB: projects/$project_name/"
+  fi
+
+  # ── 2. Write CLAUDE.md into the user's project ──────────────────────────────
+  local claude_md="$project_dir/CLAUDE.md"
   if [[ -f "$claude_md" && $force -eq 0 ]]; then
     echo "  CLAUDE.md already exists (use --force to overwrite)"
   else
-    cat > "$claude_md" << 'CLAUDEMD'
+    cat > "$claude_md" << CLAUDEMD
 # Commander KB — Bootstrap
 
-This repo is an AI knowledge base. Load it at the start of every session.
+You have a Commander knowledge base at \`$COMMANDER_DIR\`.
+Load it at the start of every session using the protocol below.
 
 ## Phase 1 — Always Load (Tier 1, ~3K tokens) — CACHE THIS PREFIX
 
-```
-identity/constitution.md
-identity/decision-heuristics.md
-identity/constraints.md
-```
+Read these files from \`$COMMANDER_DIR\`:
+- \`identity/constitution.md\`
+- \`identity/decision-heuristics.md\`
+- \`identity/constraints.md\`
 
 Place a prompt cache breakpoint after these three files.
-Cost impact: 90% reduction on Tier 1 tokens across repeated sessions.
+**Cost impact: 90% reduction on Tier 1 tokens across repeated sessions.**
 
 ## Phase 2 — Retrieve by Project (Tier 2, ≤ 3 files)
 
-Score candidates: `score = 0.6×relevance + 0.25×recency + 0.15×importance`
+Current project: \`$project_name\`
 
-Always retrieve:
-- `projects/{current-project}/gotchas.md`
+Always read:
+- \`projects/$project_name/gotchas.md\`
 
-If unfamiliar with project:
-- `projects/{current-project}/overview.md`
-- `projects/{current-project}/architecture.md`
+If unfamiliar with this project:
+- \`projects/$project_name/overview.md\`
+- \`projects/$project_name/architecture.md\`
 
-If architecture decision involved — top-2 by tag match:
-- `decisions/DEC-NNN--*.md`
-
-For security/auth work:
-- `patterns/security-patterns.md`
+For architecture decisions, top-2 by tag match:
+- \`decisions/DEC-NNN--*.md\`
 
 ## Phase 3 — Recent Sessions (Tier 3, ≤ 3 sessions)
 
-1. Open `meta/session-index.md`
-2. Filter by current project + last 30 days
-3. Load top-3 by score formula above
+1. Read \`meta/session-index.md\`
+2. Filter by project \`$project_name\` + last 30 days
+3. Load top-3 by: \`score = 0.6×relevance + 0.25×recency + 0.15×importance\`
 
 ## Token Budget
 
@@ -83,32 +162,25 @@ For security/auth work:
 
 ## Session Workflow
 
-```bash
-# Start of session
-commander session new <slug> [project1 project2 ...]
-
-# End of session (Stop hook auto-runs this if you forget)
-commander session end
-```
-
-## Key Rules
-
-- Always cache Tier 1 prefix (see `ai-systems/claude.md` for API snippet)
-- Compress session body before ending: `commander compress`
-- Never rewrite git history — it is the RL audit trail
-- Significant decisions → `commander decision new <slug>`
-- Observed outcomes → `commander feedback new <slug>`
+\`\`\`bash
+commander session new <slug> $project_name   # start session
+commander session end                         # end session (hook auto-runs on Claude exit)
+commander decision new <slug> $project_name  # log a significant decision
+commander feedback new <slug>                 # log an outcome
+\`\`\`
 CLAUDEMD
-    echo "  ✓ CLAUDE.md written"
+    echo "  ✓ CLAUDE.md written → $project_dir/CLAUDE.md"
   fi
 
-  # .claude/settings.json
-  local settings="$COMMANDER_DIR/.claude/settings.json"
+  # ── 3. Write .claude/settings.json into the user's project ──────────────────
+  local settings_dir="$project_dir/.claude"
+  local settings="$settings_dir/settings.json"
+  mkdir -p "$settings_dir"
+
   if [[ -f "$settings" && $force -eq 0 ]]; then
     echo "  .claude/settings.json already exists (use --force to overwrite)"
   else
-    mkdir -p "$COMMANDER_DIR/.claude"
-    cat > "$settings" << 'JSON'
+    cat > "$settings" << JSON
 {
   "hooks": {
     "Stop": [
@@ -117,7 +189,7 @@ CLAUDEMD
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/hooks/on-stop.sh"
+            "command": "bash $COMMANDER_DIR/scripts/hooks/on-stop.sh"
           }
         ]
       }
@@ -125,44 +197,22 @@ CLAUDEMD
   }
 }
 JSON
-    echo "  ✓ .claude/settings.json written (Stop hook configured)"
+    echo "  ✓ .claude/settings.json written (Stop hook → commander)"
   fi
 
-  # Make scripts executable
+  # ── 4. Make commander scripts executable ────────────────────────────────────
   chmod +x "$COMMANDER_DIR/commander"
   chmod +x "$COMMANDER_DIR/scripts/hooks/on-stop.sh"
   chmod +x "$COMMANDER_DIR/scripts/log-session.sh"
   chmod +x "$COMMANDER_DIR/scripts/compress-session.sh"
-  echo "  ✓ Scripts made executable"
-
-  # Codex scaffolding in ai-systems/codex.md
-  local codex_md="$COMMANDER_DIR/ai-systems/codex.md"
-  if ! grep -q "System Prompt Template" "$codex_md" 2>/dev/null; then
-    cat >> "$codex_md" << 'CODEX'
-
-## System Prompt Template
-
-Codex has no hook system. Paste this block at the start of every Codex session:
-
----
-You are working in a project with a Commander knowledge base.
-Before starting, read these files in order:
-1. identity/constitution.md
-2. identity/decision-heuristics.md
-3. identity/constraints.md
-4. projects/{current-project}/gotchas.md
-5. (optional) last 3 sessions from meta/session-index.md
-
-At session start, run: commander session new <slug> <project>
-At session end, run:   commander session end
----
-CODEX
-    echo "  ✓ Codex system prompt template added to ai-systems/codex.md"
-  fi
 
   echo ""
-  echo "Commander initialized. Get started:"
-  echo "  commander session new <slug> [project...]"
+  echo "Done. Commander is wired into $project_name."
+  echo ""
+  echo "Next steps:"
+  echo "  1. Open this project in Claude Code — CLAUDE.md loads automatically"
+  echo "  2. commander session new <what-you're-doing> $project_name"
+  echo "  3. Work. Close Claude — session auto-saved by Stop hook."
 }
 
 cmd_session_new() {
