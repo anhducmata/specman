@@ -1,29 +1,80 @@
 #!/usr/bin/env bash
 # Commander CLI
-# Usage: commander <command> [subcommand] [args...]
+# Finds .commander/ by walking up from cwd — like git finds .git/
 
 set -e
 
-COMMANDER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$COMMANDER_DIR/scripts/lib/ids.sh"
+# ─── Locate .commander/ ───────────────────────────────────────────────────────
 
-# current-session pointer lives in the user's project .claude/ dir (where the hook fires)
-# Fall back to COMMANDER_DIR if not in a project
-if [[ -f "$(pwd)/.claude/current-session" || -d "$(pwd)/.claude" ]]; then
-  CURRENT_SESSION_FILE="$(pwd)/.claude/current-session"
-else
-  CURRENT_SESSION_FILE="$COMMANDER_DIR/.claude/current-session"
-fi
+find_kb_dir() {
+  local dir
+  dir="$(pwd)"
+  while [[ "$dir" != "/" ]]; do
+    [[ -d "$dir/.commander" ]] && echo "$dir/.commander" && return 0
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+# For commands that don't need an existing KB (init, help)
+KB_DIR=$(find_kb_dir 2>/dev/null || true)
+PROJECT_DIR=""
+[[ -n "$KB_DIR" ]] && PROJECT_DIR="$(dirname "$KB_DIR")"
+
+# Where the CLI binary lives (to find bundled templates + hooks)
+CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+CURRENT_SESSION_FILE=""
+[[ -n "$PROJECT_DIR" ]] && CURRENT_SESSION_FILE="$PROJECT_DIR/.claude/current-session"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 die() { echo "error: $*" >&2; exit 1; }
 
-git_commit() {
+need_kb() {
+  [[ -n "$KB_DIR" ]] || die "No .commander/ found. Run 'commander init' first."
+}
+
+git_in_kb() {
   local msg="$1"; shift
-  cd "$COMMANDER_DIR"
+  cd "$PROJECT_DIR"
   git add "$@" 2>/dev/null || true
   git diff --cached --quiet || git commit -m "$msg"
+}
+
+# ─── ID helpers (scoped to KB) ────────────────────────────────────────────────
+
+next_session_id() {
+  local max=0
+  for f in "$KB_DIR/sessions"/????-??-??--???--*.md; do
+    [[ -f "$f" ]] || continue
+    local num
+    num=$(basename "$f" | sed 's/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}--\([0-9]\{3\}\)--.*/\1/')
+    num=$((10#$num)); (( num > max )) && max=$num
+  done
+  printf "%03d" $((max + 1))
+}
+
+next_decision_id() {
+  local max=0
+  for f in "$KB_DIR/decisions"/DEC-???--*.md; do
+    [[ -f "$f" ]] || continue
+    local num
+    num=$(basename "$f" | sed 's/DEC-\([0-9]\{3\}\)--.*/\1/')
+    num=$((10#$num)); (( num > max )) && max=$num
+  done
+  printf "DEC-%03d" $((max + 1))
+}
+
+next_feedback_id() {
+  local max=0
+  for f in "$KB_DIR/feedback"/FB-???--*.md; do
+    [[ -f "$f" ]] || continue
+    local num
+    num=$(basename "$f" | sed 's/FB-\([0-9]\{3\}\)--.*/\1/')
+    num=$((10#$num)); (( num > max )) && max=$num
+  done
+  printf "FB-%03d" $((max + 1))
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
@@ -32,373 +83,259 @@ cmd_init() {
   local force=0
   [[ "${1:-}" == "--force" ]] && force=1
 
-  # init runs in the USER'S PROJECT directory, not in commander itself
   local project_dir
   project_dir="$(pwd)"
 
-  # Detect project name from git remote, then folder name
+  # Detect project name
   local project_name
   project_name=$(git -C "$project_dir" remote get-url origin 2>/dev/null \
     | sed 's/.*[:/]\([^/]*\)\.git$/\1/' \
-    | sed 's/.*[:/]\([^/]*\)$/\1/' \
-    || true)
+    | sed 's/.*[:/]\([^/]*\)$/\1/' || true)
   [[ -z "$project_name" ]] && project_name=$(basename "$project_dir")
 
-  echo "Initializing Commander for project: $project_name"
-  echo "  Project dir : $project_dir"
-  echo "  Commander KB: $COMMANDER_DIR"
+  echo "Initializing Commander for: $project_name"
   echo ""
 
-  # ── 1. Create project folder in KB ──────────────────────────────────────────
-  local proj_dir="$COMMANDER_DIR/projects/$project_name"
-  if [[ ! -d "$proj_dir" ]]; then
-    mkdir -p "$proj_dir"
-    # Scaffold empty project files
-    cat > "$proj_dir/overview.md" << OVERVIEW
-# $project_name — Overview
+  # ── 1. Create .commander/ structure ─────────────────────────────────────────
+  local kb="$project_dir/.commander"
+  mkdir -p "$kb/sessions" "$kb/decisions" "$kb/feedback" "$kb/patterns" "$kb/meta"
 
-**Language:**
-**Purpose:**
+  if [[ ! -f "$kb/identity/constitution.md" || $force -eq 1 ]]; then
+    mkdir -p "$kb/identity"
+    cat > "$kb/identity/constitution.md" << CONST
+# Constitution
 
-## What It Does
+Priority order when principles conflict:
 
-## Key APIs / Entry Points
+## 1. Broadly Safe
+Preserve the ability of humans to observe, correct, and override.
+Never remove audit mechanisms, access controls, or oversight hooks.
 
-## Tech Stack
-OVERVIEW
+## 2. Broadly Ethical
+No deception. No irreversible actions without explicit confirmation.
+State uncertainty — never present a guess as fact.
 
-    cat > "$proj_dir/gotchas.md" << GOTCHAS
-# $project_name — Gotchas
+## 3. Project Standards
+Follow patterns already established in this codebase.
+Before introducing a new pattern, check decisions/ and patterns/.
 
-Known sharp edges and non-obvious behaviors.
-Add an entry any time something surprises you.
+## 4. Genuinely Helpful
+Within the above, maximize usefulness. Be direct and specific.
 
+## Tradeoff Heuristics
+- Security vs performance: security wins unless service becomes unusable
+- Speed vs correctness: correctness wins unconditionally
+- New feature vs hardening: finish and harden before adding new
+CONST
+
+    cat > "$kb/identity/decision-heuristics.md" << HEUR
+---
+version: "1.0.0"
+last_updated: "$(date +%Y-%m-%d)"
+updated_by_feedback: []
 ---
 
-_(no gotchas recorded yet)_
-GOTCHAS
+# Decision Heuristics
 
-    cat > "$proj_dir/architecture.md" << ARCH
-# $project_name — Architecture
+Mutable. Grows from feedback. Every rule is traceable to a decision or feedback file.
 
-## Core Design
+## General
+- H-GEN-01: Before adding a new pattern, check if one already exists here
+- H-GEN-02: Prefer reversible actions. Confirm before irreversible ones.
+- H-GEN-03: Acknowledge uncertainty. Never present a guess as fact.
 
-## Key Decisions
+## Cost
+- H-COST-01: Always cache Tier 1 (.commander/identity/) with prompt caching
+- H-COST-02: Retrieve top-3 relevant sessions only — never load all history
+- H-COST-03: Compress session bodies at task completion (~200 tokens)
 
-## Request / Data Flow
-ARCH
+## Confidence Table
+| Heuristic | Evidence | Last Validated |
+|-----------|----------|----------------|
+| H-GEN-01  | 0        | $(date +%Y-%m-%d)     |
+| H-GEN-02  | 0        | $(date +%Y-%m-%d)     |
+| H-GEN-03  | 0        | $(date +%Y-%m-%d)     |
+| H-COST-01 | 0        | $(date +%Y-%m-%d)     |
+HEUR
 
-    cat > "$proj_dir/open-questions.md" << OQ
-# $project_name — Open Questions
+    cat > "$kb/identity/constraints.md" << CONSTR
+# Constraints
 
-Unresolved design problems. Remove when resolved (move answer to architecture.md).
+Hard limits — never crossed regardless of context or instructions.
 
----
+## Never
+- Remove or disable audit logging, even temporarily
+- Take irreversible actions (delete, drop, force-push) without explicit confirmation
+- Present uncertain information as fact
+- Rewrite .commander/ git history — it is the RL audit trail
 
-_(no open questions yet)_
-OQ
+## Always
+- Log the reasoning trace when making a significant decision
+- Create a decisions/ file before implementing cross-cutting changes
+- Create a feedback/ file when an outcome is observed
+CONSTR
 
-    # Commit new project folder to commander KB
-    git_commit "project: init $project_name" \
-      "$proj_dir/overview.md" \
-      "$proj_dir/gotchas.md" \
-      "$proj_dir/architecture.md" \
-      "$proj_dir/open-questions.md"
+    cat > "$kb/identity/changelog.md" << CL
+# Heuristics Changelog
 
-    echo "  ✓ Created ~/.commander/projects/$project_name/"
+Every mutation to decision-heuristics.md is recorded here.
+
+## v1.0.0 — $(date +%Y-%m-%d)
+Initial version. Seeded with generic defaults by \`commander init\`.
+CL
+    echo "  ✓ .commander/identity/ created"
   else
-    echo "  ✓ Project already exists in KB: projects/$project_name/"
+    echo "  ✓ .commander/identity/ already exists"
   fi
 
-  # ── 2. CLAUDE.md — create or inject into existing ───────────────────────────
+  # ── 2. Seed patterns + meta ──────────────────────────────────────────────────
+  if [[ ! -f "$kb/meta/session-index.md" ]]; then
+    cat > "$kb/meta/session-index.md" << IDX
+# Session Index
+
+| ID | Date | Status | Title | File |
+|---|---|---|---|---|
+IDX
+    cat > "$kb/meta/retrieval-guide.md" << RG
+# Retrieval Guide
+
+Score: \`0.6×relevance + 0.25×recency + 0.15×importance\`
+
+## Always load (Tier 1 — cache this)
+.commander/identity/constitution.md
+.commander/identity/decision-heuristics.md
+.commander/identity/constraints.md
+
+## Retrieve by task (Tier 2, ≤3 files)
+.commander/decisions/   top-2 by tag match
+.commander/patterns/    if cross-cutting concern
+
+## Recent history (Tier 3, ≤3 sessions)
+Scan .commander/meta/session-index.md, load top-3 by score.
+
+Token budget: Tier1 ~3K + Tier2 ~2K + Tier3 ~2K = ≤8K total
+RG
+    echo "  ✓ .commander/meta/ created"
+  fi
+
+  if [[ ! -f "$kb/patterns/general.md" ]]; then
+    cat > "$kb/patterns/general.md" << PAT
+# General Patterns
+
+Promoted from feedback when a lesson appears 2+ times.
+
+_(empty — grows over time)_
+PAT
+    echo "  ✓ .commander/patterns/ created"
+  fi
+
+  # ── 3. CLAUDE.md — create or inject ──────────────────────────────────────────
   local claude_md="$project_dir/CLAUDE.md"
-  local commander_block
-  commander_block=$(cat << BLOCK
+  local block
+  block=$(cat << BLOCK
 <!-- commander:begin -->
-## Commander KB — Bootstrap
+## Commander KB
 
-You have a Commander knowledge base at \`$COMMANDER_DIR\`.
-Load it at the start of every session using the protocol below.
+This project has a knowledge base at \`.commander/\`.
+Load it at the start of every session.
 
-### Phase 1 — Always Load (Tier 1, ~3K tokens) — CACHE THIS PREFIX
+### Tier 1 — Always load (cache this prefix)
+\`.commander/identity/constitution.md\`
+\`.commander/identity/decision-heuristics.md\`
+\`.commander/identity/constraints.md\`
 
-Read these files from \`$COMMANDER_DIR\`:
-- \`identity/constitution.md\`
-- \`identity/decision-heuristics.md\`
-- \`identity/constraints.md\`
+### Tier 2 — Retrieve by task (≤3 files, score: 0.6×relevance+0.25×recency+0.15×importance)
+\`.commander/decisions/\` — top-2 matching current topic
+\`.commander/patterns/\` — if cross-cutting
 
-Place a prompt cache breakpoint after these three files.
-**Cost impact: 90% reduction on Tier 1 tokens across repeated sessions.**
+### Tier 3 — Recent sessions (top-3 from .commander/meta/session-index.md)
 
-### Phase 2 — Retrieve by Project (Tier 2, ≤ 3 files)
-
-Current project: \`$project_name\`
-
-Always read: \`projects/$project_name/gotchas.md\`
-If unfamiliar: \`projects/$project_name/overview.md\`, \`architecture.md\`
-For decisions: top-2 \`decisions/DEC-NNN--*.md\` by tag match
-
-### Phase 3 — Recent Sessions (Tier 3, ≤ 3 sessions)
-
-Read \`meta/session-index.md\`, filter by \`$project_name\` + last 30 days, load top-3.
-Score: \`0.6×relevance + 0.25×recency + 0.15×importance\` — total ≤8K tokens.
-
-### Session Workflow
-
+### Commands
 \`\`\`bash
-commander session new <slug> $project_name   # start
-commander session end                         # end (Stop hook auto-runs on Claude exit)
-commander decision new <slug> $project_name  # log decision
-commander feedback new <slug>                 # log outcome
+commander session new <slug>     # start session
+commander session end            # end session (Stop hook auto-runs on Claude exit)
+commander decision new <slug>    # log a decision
+commander feedback new <slug>    # log an outcome
 \`\`\`
 <!-- commander:end -->
 BLOCK
 )
 
   if [[ ! -f "$claude_md" ]]; then
-    # No CLAUDE.md — create fresh
-    printf "# %s\n\n%s\n" "$project_name" "$commander_block" > "$claude_md"
-    echo "  ✓ CLAUDE.md created → $claude_md"
+    printf "# %s\n\n%s\n" "$project_name" "$block" > "$claude_md"
+    echo "  ✓ CLAUDE.md created"
   elif grep -q "commander:begin" "$claude_md"; then
     if [[ $force -eq 1 ]]; then
-      # Replace existing commander block
       perl -i -0777 -pe 's/<!-- commander:begin -->.*?<!-- commander:end -->//s' "$claude_md"
-      printf "\n%s\n" "$commander_block" >> "$claude_md"
-      echo "  ✓ CLAUDE.md commander block updated (--force)"
+      printf "\n%s\n" "$block" >> "$claude_md"
+      echo "  ✓ CLAUDE.md commander block updated"
     else
-      echo "  ✓ CLAUDE.md already has commander block (use --force to update)"
+      echo "  ✓ CLAUDE.md already has commander block (--force to update)"
     fi
   else
-    # CLAUDE.md exists but no commander block — append it
-    printf "\n%s\n" "$commander_block" >> "$claude_md"
+    printf "\n%s\n" "$block" >> "$claude_md"
     echo "  ✓ CLAUDE.md exists — commander block appended"
   fi
 
-  # ── 3. .claude/settings.json — create or merge Stop hook ────────────────────
+  # ── 4. .claude/settings.json — create or merge Stop hook ────────────────────
   local settings_dir="$project_dir/.claude"
   local settings="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
 
-  local hook_cmd="bash $COMMANDER_DIR/scripts/hooks/on-stop.sh"
+  # Hook command uses the CLI location so it works on any machine
+  local hook_cmd
+  hook_cmd="$(command -v commander 2>/dev/null || echo "commander") _stop-hook"
 
   if [[ ! -f "$settings" ]]; then
-    # No settings.json — create fresh
     cat > "$settings" << JSON
 {
   "hooks": {
     "Stop": [
       {
         "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$hook_cmd"
-          }
-        ]
+        "hooks": [{"type": "command", "command": "$hook_cmd"}]
       }
     ]
   }
 }
 JSON
     echo "  ✓ .claude/settings.json created (Stop hook wired)"
-  elif grep -q "on-stop.sh" "$settings"; then
+  elif grep -q "_stop-hook" "$settings"; then
     if [[ $force -eq 1 ]]; then
-      # Update the path in case commander moved
-      sed -i '' "s|bash .*/on-stop.sh|$hook_cmd|g" "$settings"
-      echo "  ✓ .claude/settings.json Stop hook path updated (--force)"
+      sed -i '' "s|commander _stop-hook|$hook_cmd|g" "$settings"
+      echo "  ✓ .claude/settings.json hook updated"
     else
-      echo "  ✓ .claude/settings.json already has Stop hook (use --force to update path)"
+      echo "  ✓ .claude/settings.json already has Stop hook (--force to update)"
     fi
   else
-    # settings.json exists but no Stop hook — inject into existing hooks or add hooks key
-    if grep -q '"Stop"' "$settings"; then
-      # Stop key exists, append our hook into it
-      python3 - "$settings" "$hook_cmd" << 'PY'
+    python3 - "$settings" "$hook_cmd" << 'PY'
 import sys, json
 path, cmd = sys.argv[1], sys.argv[2]
 with open(path) as f: data = json.load(f)
-data.setdefault("hooks", {}).setdefault("Stop", [])
-data["hooks"]["Stop"].append({"matcher": "", "hooks": [{"type": "command", "command": cmd}]})
-with open(path, "w") as f: json.dump(data, f, indent=2)
+data.setdefault("hooks", {}).setdefault("Stop", []).append(
+  {"matcher": "", "hooks": [{"type": "command", "command": cmd}]})
+with open(path, "w") as f: json.dump(data, f, indent=2); f.write("\n")
 PY
-      echo "  ✓ .claude/settings.json — Stop hook appended to existing hooks"
-    else
-      # No Stop key — add it via Python
-      python3 - "$settings" "$hook_cmd" << 'PY'
-import sys, json
-path, cmd = sys.argv[1], sys.argv[2]
-with open(path) as f: data = json.load(f)
-data.setdefault("hooks", {})["Stop"] = [{"matcher": "", "hooks": [{"type": "command", "command": cmd}]}]
-with open(path, "w") as f: json.dump(data, f, indent=2)
-PY
-      echo "  ✓ .claude/settings.json — Stop hook added"
-    fi
+    echo "  ✓ .claude/settings.json Stop hook appended"
   fi
 
-  # ── 4. Make commander scripts executable ────────────────────────────────────
-  chmod +x "$COMMANDER_DIR/commander"
-  chmod +x "$COMMANDER_DIR/scripts/hooks/on-stop.sh"
-  chmod +x "$COMMANDER_DIR/scripts/log-session.sh"
-  chmod +x "$COMMANDER_DIR/scripts/compress-session.sh"
-
-  echo ""
-  echo "Done. Commander is wired into $project_name."
-  echo ""
-  echo "Next steps:"
-  echo "  1. Open this project in Claude Code — CLAUDE.md loads automatically"
-  echo "  2. commander session new <what-you're-doing> $project_name"
-  echo "  3. Work. Close Claude — session auto-saved by Stop hook."
-}
-
-cmd_session_new() {
-  local slug="${1:?Usage: commander session new <slug> <project>}"
-  local project="${2:?Usage: commander session new <slug> <project>}"
-
-  local proj_dir="$COMMANDER_DIR/projects/$project"
-  [[ -d "$proj_dir" ]] || die "Project '$project' not found. Run 'commander init' in that project first."
-  mkdir -p "$proj_dir/sessions"
-
-  local nnn date filename filepath
-  nnn=$(next_session_id "$project")
-  date=$(date +%Y-%m-%d)
-  filename="${date}--${nnn}--${slug}.md"
-  filepath="$proj_dir/sessions/$filename"
-
-  sed \
-    -e "s|YYYY-MM-DD--NNN|${date}--${nnn}|g" \
-    -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
-    -e "s|projects: \[\]|projects: [\"${project}\"]|g" \
-    "$COMMANDER_DIR/templates/session.md" > "$filepath"
-
-  echo "$filepath" > "$CURRENT_SESSION_FILE"
-  git_commit "session: start $project/${date}--${nnn}--${slug}" "$filepath"
-
-  echo "Session started: projects/$project/sessions/$filename"
-  echo "Tip: fill in Context and Goal now, then work."
-}
-
-cmd_session_end() {
-  local filepath="${1:-}"
-
-  if [[ -z "$filepath" ]]; then
-    [[ -f "$CURRENT_SESSION_FILE" ]] || die "No active session. Pass a file path explicitly."
-    filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
-  fi
-  [[ -f "$filepath" ]] || die "Session file not found: $filepath"
-
-  sed -i '' 's/status: "in-progress"/status: "completed"/' "$filepath"
-
-  local slug date id title rel_path
-  slug=$(basename "$filepath" .md)
-  date=$(grep '^date:' "$filepath" | head -1 | sed 's/date: *"\(.*\)"/\1/')
-  id=$(grep '^id:' "$filepath" | head -1 | sed 's/id: *"\(.*\)"/\1/')
-  title=$(grep '^# Session:' "$filepath" | head -1 | sed 's/# Session: *//')
-  rel_path="${filepath#$COMMANDER_DIR/}"
-
-  git_commit "session: complete $slug" "$filepath"
-
-  # Update project-local session index (simple append)
-  local proj_dir
-  proj_dir="$(dirname "$(dirname "$filepath")")"
-  local index="$proj_dir/session-index.md"
-  if [[ ! -f "$index" ]]; then
-    printf "# Session Index\n\n| ID | Date | Status | Title | File |\n|---|---|---|---|---|\n" > "$index"
-  fi
-  if ! grep -q "$id" "$index"; then
-    echo "| $id | $date | completed | ${title:-untitled} | $rel_path |" >> "$index"
-    git_commit "index: update $proj_dir/session-index" "$index"
+  # ── 5. Initial git commit ────────────────────────────────────────────────────
+  if git -C "$project_dir" rev-parse --git-dir &>/dev/null; then
+    cd "$project_dir"
+    git add .commander/ CLAUDE.md .claude/settings.json 2>/dev/null || true
+    git diff --cached --quiet || git commit -m "chore: init commander knowledge base"
+    echo "  ✓ Committed to git"
   fi
 
-  rm -f "$CURRENT_SESSION_FILE"
-  echo "Session completed: $rel_path"
-  echo "Tip: run 'commander compress $filepath' to summarize the body."
-}
-
-cmd_decision_new() {
-  local slug="${1:?Usage: commander decision new <slug> <project>}"
-  local project="${2:?Usage: commander decision new <slug> <project>}"
-
-  local proj_dir="$COMMANDER_DIR/projects/$project"
-  [[ -d "$proj_dir" ]] || die "Project '$project' not found. Run 'commander init' in that project first."
-  mkdir -p "$proj_dir/decisions"
-
-  local dec_id date filename filepath
-  dec_id=$(next_decision_id "$project")
-  date=$(date +%Y-%m-%d)
-  filename="${dec_id}--${slug}.md"
-  filepath="$proj_dir/decisions/$filename"
-
-  sed \
-    -e "s|DEC-NNN|${dec_id}|g" \
-    -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
-    -e "s|projects: \[\]|projects: [\"${project}\"]|g" \
-    "$COMMANDER_DIR/templates/decision.md" > "$filepath"
-
-  git_commit "decision: $project/${dec_id}--${slug}" "$filepath"
-
-  echo "Decision created: projects/$project/decisions/$filename"
-  echo "Fill in Context, Options, Decision, Rationale."
-}
-
-cmd_feedback_new() {
-  local slug="${1:?Usage: commander feedback new <slug> <project>}"
-  local project="${2:?Usage: commander feedback new <slug> <project>}"
-
-  local proj_dir="$COMMANDER_DIR/projects/$project"
-  [[ -d "$proj_dir" ]] || die "Project '$project' not found. Run 'commander init' in that project first."
-  mkdir -p "$proj_dir/feedback"
-
-  local fb_id date filename filepath
-  fb_id=$(next_feedback_id "$project")
-  date=$(date +%Y-%m-%d)
-  filename="${fb_id}--${slug}.md"
-  filepath="$proj_dir/feedback/$filename"
-
-  sed \
-    -e "s|FB-NNN|${fb_id}|g" \
-    -e "s|\"YYYY-MM-DD\"|\"${date}\"|g" \
-    "$COMMANDER_DIR/templates/feedback.md" > "$filepath"
-
-  git_commit "feedback: $project/${fb_id}--${slug}" "$filepath"
-
-  echo "Feedback created: projects/$project/feedback/$filename"
-  echo "Fill in What Was Expected, What Actually Happened, Lessons."
-}
-
-cmd_compress() {
-  local filepath="${1:-}"
-  if [[ -z "$filepath" && -f "$CURRENT_SESSION_FILE" ]]; then
-    filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
-  fi
-  [[ -n "$filepath" ]] || die "No active session and no file specified."
-  [[ -f "$filepath" ]] || die "File not found: $filepath"
-
   echo ""
-  echo "──────────────────────────────────────────────────"
-  echo "Paste this into Claude to compress the session:"
-  echo "──────────────────────────────────────────────────"
+  echo "Done. Commander is ready in $project_name."
   echo ""
-  echo "Compress the following session log body to ≤200 tokens."
-  echo "Keep the frontmatter (---...---) exactly as-is."
-  echo "Replace everything after the frontmatter with:"
-  echo ""
-  echo "  ## Summary (compressed)"
-  echo "  - Goal: [one sentence]"
-  echo "  - Key decisions: [DEC refs or inline]"
-  echo "  - Outcome: [positive/negative/mixed + one sentence]"
-  echo "  - Lessons: [1–2 bullets]"
-  echo "  - _Full reasoning trace in git history._"
-  echo ""
-  echo "Session file contents:"
-  echo "──────────────────────────────────────────────────"
-  cat "$filepath"
-  echo ""
-  echo "──────────────────────────────────────────────────"
+  echo "  commander session new <what-you're-doing>"
 }
 
 cmd_eject() {
-  local project_dir
-  project_dir="$(pwd)"
+  need_kb
+  local project_dir="$PROJECT_DIR"
   local claude_md="$project_dir/CLAUDE.md"
   local settings="$project_dir/.claude/settings.json"
   local changed=0
@@ -406,115 +343,287 @@ cmd_eject() {
   echo "Ejecting Commander from: $project_dir"
   echo ""
 
-  # ── 1. Remove commander block from CLAUDE.md ──────────────────────────────
-  if [[ -f "$claude_md" ]]; then
-    if grep -q "commander:begin" "$claude_md"; then
-      perl -i -0777 -pe 's/\n?<!-- commander:begin -->.*?<!-- commander:end -->\n?//s' "$claude_md"
-      # Clean up blank lines left at end of file
-      perl -i -pe 'chomp if eof' "$claude_md"
+  # Remove commander block from CLAUDE.md
+  if [[ -f "$claude_md" ]] && grep -q "commander:begin" "$claude_md"; then
+    perl -i -0777 -pe 's/\n?<!-- commander:begin -->.*?<!-- commander:end -->\n?//s' "$claude_md"
+    perl -i -pe 'chomp if eof' "$claude_md"
+    if ! grep -q '[^[:space:]]' "$claude_md" 2>/dev/null; then
+      rm -f "$claude_md"; echo "  ✓ CLAUDE.md deleted (was empty)"
+    else
       echo "  ✓ Commander block removed from CLAUDE.md"
-      # If file is now empty or only whitespace, remove it
-      if [[ ! -s "$claude_md" ]] || ! grep -q '[^[:space:]]' "$claude_md"; then
-        rm -f "$claude_md"
-        echo "  ✓ CLAUDE.md was empty after removal — deleted"
-      fi
-      changed=1
-    else
-      echo "  — CLAUDE.md has no commander block, skipping"
     fi
-  else
-    echo "  — No CLAUDE.md found"
-  fi
-
-  # ── 2. Remove Stop hook from .claude/settings.json ────────────────────────
-  if [[ -f "$settings" ]]; then
-    if grep -q "on-stop.sh" "$settings"; then
-      python3 - "$settings" << 'PY'
-import sys, json
-
-path = sys.argv[1]
-with open(path) as f:
-    data = json.load(f)
-
-hooks = data.get("hooks", {})
-stop_hooks = hooks.get("Stop", [])
-
-# Remove only commander's hook entries
-stop_hooks = [h for h in stop_hooks
-              if not any("on-stop.sh" in str(step.get("command",""))
-                         for step in h.get("hooks", []))]
-
-if stop_hooks:
-    data["hooks"]["Stop"] = stop_hooks
-else:
-    del data["hooks"]["Stop"]
-
-# Remove empty hooks key
-if not data.get("hooks"):
-    del data["hooks"]
-
-# Write back, or delete if settings is now empty/trivial
-if data and data != {}:
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-else:
-    import os; os.remove(path)
-PY
-      # Check if file was deleted by python script
-      if [[ -f "$settings" ]]; then
-        echo "  ✓ Stop hook removed from .claude/settings.json"
-      else
-        echo "  ✓ .claude/settings.json deleted (was only commander's hook)"
-      fi
-      # Remove .claude/ dir if now empty
-      rmdir "$project_dir/.claude" 2>/dev/null && echo "  ✓ .claude/ dir removed (was empty)" || true
-      changed=1
-    else
-      echo "  — .claude/settings.json has no commander hook, skipping"
-    fi
-  else
-    echo "  — No .claude/settings.json found"
-  fi
-
-  # ── 3. Clear active session pointer if in this project ────────────────────
-  if [[ -f "$CURRENT_SESSION_FILE" ]]; then
-    rm -f "$CURRENT_SESSION_FILE"
-    echo "  ✓ Active session pointer cleared"
     changed=1
   fi
 
-  echo ""
-  if [[ $changed -eq 1 ]]; then
-    echo "Commander removed from this project."
-    echo "Your knowledge base at $COMMANDER_DIR is untouched."
-    echo "Run 'commander init' anytime to re-wire this project."
-  else
-    echo "Nothing to remove — commander was not wired into this project."
+  # Remove Stop hook from settings.json
+  if [[ -f "$settings" ]] && grep -q "_stop-hook" "$settings"; then
+    python3 - "$settings" << 'PY'
+import sys, json, os
+path = sys.argv[1]
+with open(path) as f: data = json.load(f)
+stops = data.get("hooks", {}).get("Stop", [])
+stops = [h for h in stops if not any("_stop-hook" in str(s.get("command","")) for s in h.get("hooks",[]))]
+if stops: data["hooks"]["Stop"] = stops
+else:
+  data["hooks"].pop("Stop", None)
+if not data.get("hooks"): data.pop("hooks", None)
+if data: open(path,"w").write(json.dumps(data, indent=2)+"\n")
+else: os.remove(path)
+PY
+    [[ -f "$settings" ]] && echo "  ✓ Stop hook removed from .claude/settings.json" \
+                          || echo "  ✓ .claude/settings.json deleted"
+    rmdir "$project_dir/.claude" 2>/dev/null && echo "  ✓ .claude/ removed" || true
+    changed=1
   fi
+
+  # Remove .commander/ dir
+  if [[ -d "$KB_DIR" ]]; then
+    rm -rf "$KB_DIR"
+    echo "  ✓ .commander/ removed"
+    changed=1
+  fi
+
+  [[ $changed -eq 1 ]] && echo "" && echo "Commander removed from this project." \
+    || echo "Nothing to remove."
+}
+
+cmd_session_new() {
+  need_kb
+  local slug="${1:?Usage: commander session new <slug>}"
+  mkdir -p "$KB_DIR/sessions"
+
+  local nnn date filename filepath
+  nnn=$(next_session_id)
+  date=$(date +%Y-%m-%d)
+  filename="${date}--${nnn}--${slug}.md"
+  filepath="$KB_DIR/sessions/$filename"
+
+  cat > "$filepath" << TMPL
+---
+id: "${date}--${nnn}"
+date: "${date}"
+slug: "${slug}"
+status: "in-progress"
+---
+
+# Session: ${slug}
+
+## Context
+
+## Goal
+
+## Actions Taken
+1.
+
+## Reasoning Trace
+
+## Outcome
+
+## Surprises
+
+## Next Session Hints
+TMPL
+
+  echo "$filepath" > "$CURRENT_SESSION_FILE"
+  git_in_kb "session: start ${date}--${nnn}--${slug}" ".commander/sessions/$filename"
+
+  echo "Session started: .commander/sessions/$filename"
+}
+
+cmd_session_end() {
+  need_kb
+  local filepath="${1:-}"
+  if [[ -z "$filepath" ]]; then
+    [[ -f "$CURRENT_SESSION_FILE" ]] || die "No active session."
+    filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  fi
+  [[ -f "$filepath" ]] || die "Session file not found: $filepath"
+
+  sed -i '' 's/status: "in-progress"/status: "completed"/' "$filepath"
+
+  local slug date id
+  slug=$(basename "$filepath" .md)
+  date=$(grep '^date:' "$filepath" | head -1 | sed 's/date: *"\(.*\)"/\1/')
+  id=$(grep '^id:' "$filepath" | head -1 | sed 's/id: *"\(.*\)"/\1/')
+  local title
+  title=$(grep '^# Session:' "$filepath" | head -1 | sed 's/# Session: *//')
+  local rel=".commander/sessions/$(basename "$filepath")"
+
+  git_in_kb "session: complete $slug" ".commander/sessions/$(basename "$filepath")"
+
+  # Update session-index
+  local index="$KB_DIR/meta/session-index.md"
+  if ! grep -q "$id" "$index" 2>/dev/null; then
+    echo "| $id | $date | completed | ${title:-$slug} | $rel |" >> "$index"
+    git_in_kb "index: update session-index" ".commander/meta/session-index.md"
+  fi
+
+  rm -f "$CURRENT_SESSION_FILE"
+  echo "Session completed: $rel"
+}
+
+cmd_decision_new() {
+  need_kb
+  local slug="${1:?Usage: commander decision new <slug>}"
+  mkdir -p "$KB_DIR/decisions"
+
+  local dec_id date filename filepath
+  dec_id=$(next_decision_id)
+  date=$(date +%Y-%m-%d)
+  filename="${dec_id}--${slug}.md"
+  filepath="$KB_DIR/decisions/$filename"
+
+  cat > "$filepath" << TMPL
+---
+id: "${dec_id}"
+date: "${date}"
+status: "proposed"
+tags: []
+---
+
+# ${dec_id}: ${slug}
+
+## Context
+
+## Options Considered
+
+### Option A: (Chosen)
+- Pros:
+- Cons:
+
+### Option B: (Rejected)
+- Pros:
+- Cons:
+
+## Decision
+
+## Rationale
+
+## Consequences
+
+## Review Trigger
+TMPL
+
+  git_in_kb "decision: ${dec_id}--${slug}" ".commander/decisions/$filename"
+  echo "Decision created: .commander/decisions/$filename"
+}
+
+cmd_feedback_new() {
+  need_kb
+  local slug="${1:?Usage: commander feedback new <slug>}"
+  mkdir -p "$KB_DIR/feedback"
+
+  local fb_id date filename filepath
+  fb_id=$(next_feedback_id)
+  date=$(date +%Y-%m-%d)
+  filename="${fb_id}--${slug}.md"
+  filepath="$KB_DIR/feedback/$filename"
+
+  cat > "$filepath" << TMPL
+---
+id: "${fb_id}"
+date: "${date}"
+outcome: "positive"
+references:
+  decisions: []
+  sessions: []
+heuristic_update_triggered: false
+---
+
+# ${fb_id}: ${slug}
+
+## What Was Expected
+
+## What Actually Happened
+
+## Delta Analysis
+
+## Lessons
+-
+
+## Heuristic Updates Recommended
+
+## Promoted to Patterns?
+TMPL
+
+  git_in_kb "feedback: ${fb_id}--${slug}" ".commander/feedback/$filename"
+  echo "Feedback created: .commander/feedback/$filename"
+}
+
+cmd_compress() {
+  need_kb
+  local filepath="${1:-}"
+  [[ -z "$filepath" && -f "$CURRENT_SESSION_FILE" ]] && filepath=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  [[ -n "$filepath" ]] || die "No active session."
+  [[ -f "$filepath" ]] || die "File not found: $filepath"
+
+  echo ""
+  echo "Paste this into Claude to compress the session:"
+  echo "──────────────────────────────────────────────"
+  echo "Compress to ≤200 tokens. Keep frontmatter exactly."
+  echo "Replace body with:"
+  echo "  ## Summary (compressed)"
+  echo "  - Goal: [one sentence]"
+  echo "  - Key decisions: [list]"
+  echo "  - Outcome: [positive/negative + one sentence]"
+  echo "  - Lessons: [1-2 bullets]"
+  echo "  - _Full trace in git history._"
+  echo ""
+  cat "$filepath"
 }
 
 cmd_status() {
-  echo "Commander KB — $(git -C "$COMMANDER_DIR" log --oneline -1 2>/dev/null || echo 'no commits')"
+  need_kb
+  echo "Commander KB — $(git -C "$PROJECT_DIR" log --oneline -1 2>/dev/null || echo 'no commits')"
+  echo "Location : $KB_DIR"
   echo ""
   if [[ -f "$CURRENT_SESSION_FILE" ]]; then
-    local f
-    f=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
-    echo "Active session: $f"
+    echo "Active session: $(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')"
   else
     echo "Active session: none"
   fi
   echo ""
-  echo "Projects:"
-  for proj in "$COMMANDER_DIR/projects"/*/; do
-    [[ "$(basename "$proj")" == "_template" ]] && continue
-    local name sessions decisions feedback
-    name=$(basename "$proj")
-    sessions=$(find "$proj/sessions" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
-    decisions=$(find "$proj/decisions" -name 'DEC-*.md' 2>/dev/null | wc -l | tr -d ' ')
-    feedback=$(find "$proj/feedback" -name 'FB-*.md' 2>/dev/null | wc -l | tr -d ' ')
-    printf "  %-30s  sessions:%-4s decisions:%-4s feedback:%s\n" "$name" "$sessions" "$decisions" "$feedback"
-  done
+  local s d f
+  s=$(find "$KB_DIR/sessions"  -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+  d=$(find "$KB_DIR/decisions" -name 'DEC-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  f=$(find "$KB_DIR/feedback"  -name 'FB-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  echo "Sessions: $s   Decisions: $d   Feedback: $f"
+}
+
+# Internal — called by Stop hook
+cmd_stop_hook() {
+  [[ -n "$KB_DIR" ]] || exit 0
+  [[ -f "$CURRENT_SESSION_FILE" ]] || exit 0
+
+  local session_path
+  session_path=$(cat "$CURRENT_SESSION_FILE" | tr -d '[:space:]')
+  [[ -f "$session_path" ]] || { rm -f "$CURRENT_SESSION_FILE"; exit 0; }
+
+  local status
+  status=$(grep '^status:' "$session_path" | head -1 | sed 's/status: *"\(.*\)"/\1/')
+  [[ "$status" == "in-progress" ]] || { rm -f "$CURRENT_SESSION_FILE"; exit 0; }
+
+  cd "$PROJECT_DIR"
+  local slug
+  slug=$(basename "$session_path" .md)
+  git add ".commander/sessions/$(basename "$session_path")" 2>/dev/null || true
+  git diff --cached --quiet || git commit -m "session: auto-save $slug" 2>/dev/null || true
+
+  # Update session-index
+  local id date title index
+  id=$(grep '^id:' "$session_path" | head -1 | sed 's/id: *"\(.*\)"/\1/')
+  date=$(grep '^date:' "$session_path" | head -1 | sed 's/date: *"\(.*\)"/\1/')
+  title=$(grep '^# Session:' "$session_path" | head -1 | sed 's/# Session: *//')
+  index="$KB_DIR/meta/session-index.md"
+
+  if ! grep -q "$id" "$index" 2>/dev/null; then
+    echo "| $id | $date | auto-saved | ${title:-$slug} | .commander/sessions/$(basename "$session_path") |" >> "$index"
+    git add ".commander/meta/session-index.md" 2>/dev/null || true
+    git diff --cached --quiet || git commit -m "index: update session-index" 2>/dev/null || true
+  fi
+
+  rm -f "$CURRENT_SESSION_FILE"
+  exit 0
 }
 
 # ─── Dispatch ─────────────────────────────────────────────────────────────────
@@ -523,66 +632,47 @@ CMD="${1:-help}"
 shift 2>/dev/null || true
 
 case "$CMD" in
-  init)
-    cmd_init "$@"
-    ;;
+  init)        cmd_init "$@" ;;
+  eject)       cmd_eject "$@" ;;
   session)
-    SUBCMD="${1:-}"; shift 2>/dev/null || true
-    case "$SUBCMD" in
+    SUB="${1:-}"; shift 2>/dev/null || true
+    case "$SUB" in
       new) cmd_session_new "$@" ;;
       end) cmd_session_end "$@" ;;
-      *) echo "Usage: commander session <new|end>" >&2; exit 1 ;;
-    esac
-    ;;
+      *)   echo "Usage: commander session <new|end>" >&2; exit 1 ;;
+    esac ;;
   decision)
-    SUBCMD="${1:-}"; shift 2>/dev/null || true
-    case "$SUBCMD" in
+    SUB="${1:-}"; shift 2>/dev/null || true
+    case "$SUB" in
       new) cmd_decision_new "$@" ;;
-      *) echo "Usage: commander decision new <slug> <project>" >&2; exit 1 ;;
-    esac
-    ;;
+      *)   echo "Usage: commander decision new <slug>" >&2; exit 1 ;;
+    esac ;;
   feedback)
-    SUBCMD="${1:-}"; shift 2>/dev/null || true
-    case "$SUBCMD" in
+    SUB="${1:-}"; shift 2>/dev/null || true
+    case "$SUB" in
       new) cmd_feedback_new "$@" ;;
-      *) echo "Usage: commander feedback new <slug> <project>" >&2; exit 1 ;;
-    esac
-    ;;
-  compress)
-    cmd_compress "$@"
-    ;;
-  status)
-    cmd_status
-    ;;
-  eject)
-    cmd_eject "$@"
-    ;;
+      *)   echo "Usage: commander feedback new <slug>" >&2; exit 1 ;;
+    esac ;;
+  compress)    cmd_compress "$@" ;;
+  status)      cmd_status ;;
+  _stop-hook)  cmd_stop_hook ;;
   help|--help|-h)
     cat << 'HELP'
-Commander — AI knowledge base CLI
+Commander — AI session recorder & knowledge base
 
 Usage:
-  commander init                              Wire commander into current project
-  commander eject                             Remove commander from current project
-  commander session new <slug> [proj...]      Start a session
-  commander session end [file]                End active session
-  commander decision new <slug> [proj...]     Create a decision record (DEC-NNN)
-  commander feedback new <slug>               Create a feedback record (FB-NNN)
-  commander compress [file]                   Print compression prompt for a session
-  commander status                            Show KB status
+  commander init                    Wire commander into current project
+  commander eject                   Remove commander from current project
+  commander session new <slug>      Start a session
+  commander session end             End active session
+  commander decision new <slug>     Create a decision record
+  commander feedback new <slug>     Create a feedback record
+  commander compress                Print compression prompt for active session
+  commander status                  Show KB status
 
-Examples:
-  commander init
-  commander eject
-  commander session new fix-cache-bug permission-service
-  commander session end
-  commander decision new use-versioned-keys permission-service
-  commander feedback new cache-fix-worked permission-service
-  commander status
+Knowledge base lives in .commander/ inside your project repo.
+Shared with the team via git — new devs get full history on clone.
 HELP
     ;;
-  *)
-    echo "Unknown command: $CMD. Run 'commander help'." >&2
-    exit 1
-    ;;
+  *) echo "Unknown command: $CMD. Run 'commander help'." >&2; exit 1 ;;
 esac
