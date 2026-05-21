@@ -407,6 +407,104 @@ cmd_compress() {
   echo "──────────────────────────────────────────────────"
 }
 
+cmd_eject() {
+  local project_dir
+  project_dir="$(pwd)"
+  local claude_md="$project_dir/CLAUDE.md"
+  local settings="$project_dir/.claude/settings.json"
+  local changed=0
+
+  echo "Ejecting Commander from: $project_dir"
+  echo ""
+
+  # ── 1. Remove commander block from CLAUDE.md ──────────────────────────────
+  if [[ -f "$claude_md" ]]; then
+    if grep -q "commander:begin" "$claude_md"; then
+      perl -i -0777 -pe 's/\n?<!-- commander:begin -->.*?<!-- commander:end -->\n?//s' "$claude_md"
+      # Clean up blank lines left at end of file
+      perl -i -pe 'chomp if eof' "$claude_md"
+      echo "  ✓ Commander block removed from CLAUDE.md"
+      # If file is now empty or only whitespace, remove it
+      if [[ ! -s "$claude_md" ]] || ! grep -q '[^[:space:]]' "$claude_md"; then
+        rm -f "$claude_md"
+        echo "  ✓ CLAUDE.md was empty after removal — deleted"
+      fi
+      changed=1
+    else
+      echo "  — CLAUDE.md has no commander block, skipping"
+    fi
+  else
+    echo "  — No CLAUDE.md found"
+  fi
+
+  # ── 2. Remove Stop hook from .claude/settings.json ────────────────────────
+  if [[ -f "$settings" ]]; then
+    if grep -q "on-stop.sh" "$settings"; then
+      python3 - "$settings" << 'PY'
+import sys, json
+
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+
+hooks = data.get("hooks", {})
+stop_hooks = hooks.get("Stop", [])
+
+# Remove only commander's hook entries
+stop_hooks = [h for h in stop_hooks
+              if not any("on-stop.sh" in str(step.get("command",""))
+                         for step in h.get("hooks", []))]
+
+if stop_hooks:
+    data["hooks"]["Stop"] = stop_hooks
+else:
+    del data["hooks"]["Stop"]
+
+# Remove empty hooks key
+if not data.get("hooks"):
+    del data["hooks"]
+
+# Write back, or delete if settings is now empty/trivial
+if data and data != {}:
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+else:
+    import os; os.remove(path)
+PY
+      # Check if file was deleted by python script
+      if [[ -f "$settings" ]]; then
+        echo "  ✓ Stop hook removed from .claude/settings.json"
+      else
+        echo "  ✓ .claude/settings.json deleted (was only commander's hook)"
+      fi
+      # Remove .claude/ dir if now empty
+      rmdir "$project_dir/.claude" 2>/dev/null && echo "  ✓ .claude/ dir removed (was empty)" || true
+      changed=1
+    else
+      echo "  — .claude/settings.json has no commander hook, skipping"
+    fi
+  else
+    echo "  — No .claude/settings.json found"
+  fi
+
+  # ── 3. Clear active session pointer if in this project ────────────────────
+  if [[ -f "$CURRENT_SESSION_FILE" ]]; then
+    rm -f "$CURRENT_SESSION_FILE"
+    echo "  ✓ Active session pointer cleared"
+    changed=1
+  fi
+
+  echo ""
+  if [[ $changed -eq 1 ]]; then
+    echo "Commander removed from this project."
+    echo "Your knowledge base at $COMMANDER_DIR is untouched."
+    echo "Run 'commander init' anytime to re-wire this project."
+  else
+    echo "Nothing to remove — commander was not wired into this project."
+  fi
+}
+
 cmd_status() {
   echo "Commander KB — $(git -C "$COMMANDER_DIR" log --oneline -1 2>/dev/null || echo 'no commits')"
   echo ""
@@ -460,12 +558,16 @@ case "$CMD" in
   status)
     cmd_status
     ;;
+  eject)
+    cmd_eject "$@"
+    ;;
   help|--help|-h)
     cat << 'HELP'
 Commander — AI knowledge base CLI
 
 Usage:
-  commander init                              Set up CLAUDE.md + Claude Code hooks
+  commander init                              Wire commander into current project
+  commander eject                             Remove commander from current project
   commander session new <slug> [proj...]      Start a session
   commander session end [file]                End active session
   commander decision new <slug> [proj...]     Create a decision record (DEC-NNN)
@@ -475,6 +577,7 @@ Usage:
 
 Examples:
   commander init
+  commander eject
   commander session new fix-cache-bug permission-service
   commander session end
   commander decision new versioned-cache-keys permission-service
