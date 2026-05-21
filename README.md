@@ -1,7 +1,30 @@
 # Commander Knowledge Base
 
-A structured, RL-inspired memory system for AI agents working on the Amili authorization platform.
+A structured, RL-inspired memory system for AI agents.
 Git history is the audit trail. Every commit is a recorded event.
+
+---
+
+## Quick Start
+
+```bash
+# 1. One-time setup (creates CLAUDE.md + Claude Code Stop hook)
+bash commander init
+
+# 2. Start a session
+bash commander session new <slug> [project...]
+
+# 3. Work — Claude loads context automatically via CLAUDE.md
+
+# 4. End session (or just close Claude — the Stop hook handles it)
+bash commander session end
+
+# 5. Log a significant decision
+bash commander decision new <slug> [project...]
+
+# 6. Record an outcome
+bash commander feedback new <slug>
+```
 
 ---
 
